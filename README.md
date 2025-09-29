@@ -8,14 +8,11 @@ This repository contains my coursework and assignments for various university su
 
 ### 📝 Description of Folders
 
-* **Introduction-to-Programming (WDP)**
-  Basic programming exercises and introductory concepts, including algorithms, data types, and control structures.
-
 * **Object-Oriented-Programming (PO)**
   Projects and examples focusing on OOP principles such as classes, inheritance, polymorphism, and encapsulation.
 
-* **Computer-Architecture and Operating-Systems **
-  Assignments and notes related to the structure and organization of computer systems, instruction sets, process management, memory allocation, file systems, and concurrency.
+* **Computer-Architecture and Operating-Systems (AKSO)**
+  Assignments related to the structure and organization of computer systems, instruction sets, process management, memory allocation, file systems, and concurrency.
 
 ## 🛠️ Technologies
 
