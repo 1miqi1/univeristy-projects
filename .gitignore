@@ -17,6 +17,7 @@
 !*.css
 !*.md
 !*.asm
+!*.sh
 
 # Allow project structure
 !src/**
