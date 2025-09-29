@@ -1,10 +1,10 @@
 # Ignore everything
 *
 
-# Allow directories 
+# Allow directories (so rules can apply inside them)
 !*/
 
-# Allow source files by extension 
+# Allow source files by extension
 !*.c
 !*.cpp
 !*.h
@@ -16,10 +16,11 @@
 !*.html
 !*.css
 !*.md
+!*.asm
 
-# Allow project structures
+# Allow project structure
 !src/**
 
-# Allow README or LICENSE files
+# Allow common project docs
 !README.md
 !LICENSE
