@@ -1,5 +1,3 @@
-Here’s a clean and professional **README.md** you can place in the root of your university projects folder. It gives a clear overview of the structure and purpose:
-
 ---
 
 # 📚 University Projects
