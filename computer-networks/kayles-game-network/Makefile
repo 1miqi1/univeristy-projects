@@ -2,44 +2,54 @@
 # Makefile for Kayles client & server
 # -------------------------------
 
+# Compilers
 CC     = gcc
-CFLAGS = -Wall -Wextra -O2 -std=gnu17  -g -fsanitize=address
-LDFLAGS = -fsanitize=address
+CXX    = g++
+
+# Flags
+CFLAGS   = -Wall -Wextra -O2 -std=gnu17 -g -fsanitize=address
+CXXFLAGS = -Wall -Wextra -O2 -std=c++17 -g -fsanitize=address
+
+# Include directories
+INCDIRS = -I/usr/local/include
+
+# Libraries for server
+LIBS    = -lpthread        # only link libraries you actually have
+LDFLAGS_SERVER = -fsanitize=address $(LIBS)
+
+# Targets
+TARGET_CLIENT = kayles_client
+TARGET_SERVER = kayles_server
+
+# Source files
+C_SRCS   = err.c common.c protocol.c game.c kayles_client.c
+CPP_SRCS = kayles_server.cpp
+
+OBJ_C   = $(C_SRCS:.c=.o)
+OBJ_CPP = $(CPP_SRCS:.cpp=.o)
 
 .PHONY: all clean
 
-TARGET1 = kayles_client
-TARGET2 = kayles_server
+# Default target
+all: $(TARGET_CLIENT) $(TARGET_SERVER)
 
-all: $(TARGET1) $(TARGET2)
+# Link client
+$(TARGET_CLIENT): $(OBJ_C)
+	$(CC) $(CFLAGS) -o $@ $^
 
-# Linking targets
-$(TARGET1): kayles_client.o common.o err.o protocol.o game.o
-	$(CC) $(CFLAGS) -g -o $@ $^
+# Link server
+# Note: server object depends on all C objects except kayles_client.o
+$(TARGET_SERVER): $(OBJ_CPP) $(filter-out kayles_client.o, $(OBJ_C))
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS_SERVER)
 
-$(TARGET2): kayles_server.o common.o err.o protocol.o game.o
-	$(CC) $(CFLAGS) -g -o $@ $^
+# Compile C files
+%.o: %.c
+	$(CC) $(CFLAGS) $(INCDIRS) -c $< -o $@
 
-# Explicit dependencies
-
-# err
-err.o: err.c err.h
-
-# common
-common.o: common.c err.h common.h
-
-# protocol
-protocol.o: protocol.c protocol.h err.h common.h
-
-# game
-game.o: game.c game.h err.h common.h
-
-# client
-kayles_client.o: kayles_client.c protocol.h err.h common.h game.h
-
-# server
-kayles_server.o: kayles_server.c protocol.h err.h common.h game.h
+# Compile C++ files
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) $(INCDIRS) -c $< -o $@
 
 # Clean build files
 clean:
-	rm -f $(TARGET1) $(TARGET2) *.o *~
+	rm -f $(TARGET_CLIENT) $(TARGET_SERVER) *.o *~

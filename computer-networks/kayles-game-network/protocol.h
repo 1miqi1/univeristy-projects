@@ -7,6 +7,7 @@
 // ----------------------------
 #define MAX_MESSAGE_LENGTH 4   // maximum number of tokens in a client message
 #define MAX_UINT8        255   // maximum value for a byte
+#define MAX_PAWN_ROW_LENGHT 256
 
 
 typedef enum {
@@ -22,12 +23,16 @@ typedef enum {
 // ----------------------------
 typedef enum {
     PARSE_OK = 0,
-    PARSE_ERR_NULL_ARGUMENT,
-    PARSE_ERR_MEMORY,
-    PARSE_ERR_INVALID_NUMBER,
-    PARSE_ERR_TOO_FEW_FIELDS,
-    PARSE_ERR_INVALID_MESSAGE,
-    PARSE_ERR_UNKNOWN_TYPE
+    PARSE_ERR_INPUT,      // Logic/Syntax errors
+    PARSE_ERR_RESOURCE,   // System/Memory errors (call syserr)
+} ParseStatus;
+
+// ----------------------------
+// Parsing error result
+// ----------------------------
+typedef struct {
+    ParseStatus status;
+    const char* msg;
 } ParseResult;
 
 // ----------------------------

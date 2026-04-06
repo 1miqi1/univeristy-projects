@@ -1,14 +1,23 @@
-#ifndef MIM_ERR_H
-#define MIM_ERR_H
+#ifndef ERR_H
+#define ERR_H
 
-#include <stdnoreturn.h>
+#ifdef __cplusplus
+#include <cstddef>            // for [[noreturn]] in C++
+#define NORETURN [[noreturn]] 
+extern "C" {
+#else
+#include <stdnoreturn.h>     // C11
+#define NORETURN noreturn
+#endif
 
 // Print information about a system error and quits.
-noreturn void syserr(const char* fmt, ...);
+NORETURN void syserr(const char* fmt, ...);
 
 // Print information about an error and quits.
-noreturn void fatal(const char* fmt, ...);
+NORETURN void fatal(const char* fmt, ...);
 
-
+#ifdef __cplusplus
+} // extern "C"
+#endif
 
 #endif
