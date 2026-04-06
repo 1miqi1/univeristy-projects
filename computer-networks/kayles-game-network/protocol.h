@@ -18,6 +18,19 @@ typedef enum {
 } MsgType;
 
 // ----------------------------
+// Parsing errors
+// ----------------------------
+typedef enum {
+    PARSE_OK = 0,
+    PARSE_ERR_NULL_ARGUMENT,
+    PARSE_ERR_MEMORY,
+    PARSE_ERR_INVALID_NUMBER,
+    PARSE_ERR_TOO_FEW_FIELDS,
+    PARSE_ERR_INVALID_MESSAGE,
+    PARSE_ERR_UNKNOWN_TYPE
+} ParseResult;
+
+// ----------------------------
 // Game status
 // ----------------------------
 typedef enum {
@@ -57,14 +70,22 @@ typedef struct {
 
 // Serialize ClientMessage into buffer
 // Returns number of bytes written or -1 on error
-int serialize_client_message(const ClientMessage *msg, uint8_t *buf);
+size_t serialize_client_message(const ClientMessage *msg, uint8_t *buf);
+
+// Deserialize ClientMessage
+int deserialize_client_message(ClientMessage *msg, const uint8_t *buf);
+
+// Parse error to string
+const char* parse_error_string(ParseResult err);
 
 // Parse ClientMessage from buffer
 // Returns 0 on success, -1 on error
-int parse_client_message(const char *string, ClientMessage *msg);
+ParseResult parse_client_message(const char *string, ClientMessage *msg);
+
+size_t get_client_message_size(const ClientMessage *msg);
 
 // Prints ClientMessage contents
-void print_client_message(ClientMessage *msg);
+void print_client_message(const ClientMessage *msg);
 
 // Serialize GameState into buffer
 // Returns number of bytes written

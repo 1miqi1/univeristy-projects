@@ -8,9 +8,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "err.h"
 #include "common.h"
+
 
 int validate_number(const char* token, uint32_t* result) {
     if (!token || strlen(token) == 0) {

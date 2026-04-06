@@ -1,45 +1,45 @@
-# Kompilatory
-CC       = gcc
-CXX      = g++
+# -------------------------------
+# Makefile for Kayles client & server
+# -------------------------------
 
-# Flagi kompilacji
-# -Wall -Wextra -Werror (zgodnie ze sztuką i wymogami)
-CFLAGS   = -Wall -Wextra -Werror -O2
-CXXFLAGS = -Wall -Wextra -Werror -O2 -std=c++17
-
-# Pliki wykonywalne
-CLIENT   = kayles_client
-SERVER   = kayles_server
-
-# Pliki obiektowe
-# Wspólne dla obu (napisane w C)
-COMMON_OBJS = common.o err.o
-
-# Specyficzne dla programów (napisane w C++)
-CLIENT_OBJS = kayles_client.o
-SERVER_OBJS = kayles_server.o
-
-# Główny cel
-all: $(CLIENT) $(SERVER)
-
-# Linkowanie klienta (używamy g++, bo on dołącza biblioteki C++)
-$(CLIENT): $(CLIENT_OBJS) $(COMMON_OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
-
-# Linkowanie serwera
-$(SERVER): $(SERVER_OBJS) $(COMMON_OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
-
-# Reguła kompilacji plików .c (używa gcc)
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# Reguła kompilacji plików .cpp (używa g++)
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-# Czyszczenie (zgodnie z wymogami: usuwa binarki i pliki .o)
-clean:
-	rm -f $(CLIENT) $(SERVER) *.o
+CC     = gcc
+CFLAGS = -Wall -Wextra -O2 -std=gnu17  -g -fsanitize=address
+LDFLAGS = -fsanitize=address
 
 .PHONY: all clean
+
+TARGET1 = kayles_client
+TARGET2 = kayles_server
+
+all: $(TARGET1) $(TARGET2)
+
+# Linking targets
+$(TARGET1): kayles_client.o common.o err.o protocol.o game.o
+	$(CC) $(CFLAGS) -g -o $@ $^
+
+$(TARGET2): kayles_server.o common.o err.o protocol.o game.o
+	$(CC) $(CFLAGS) -g -o $@ $^
+
+# Explicit dependencies
+
+# err
+err.o: err.c err.h
+
+# common
+common.o: common.c err.h common.h
+
+# protocol
+protocol.o: protocol.c protocol.h err.h common.h
+
+# game
+game.o: game.c game.h err.h common.h
+
+# client
+kayles_client.o: kayles_client.c protocol.h err.h common.h game.h
+
+# server
+kayles_server.o: kayles_server.c protocol.h err.h common.h game.h
+
+# Clean build files
+clean:
+	rm -f $(TARGET1) $(TARGET2) *.o *~

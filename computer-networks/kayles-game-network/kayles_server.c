@@ -14,15 +14,6 @@
 
 #define BUFFER_SIZE 10
 
-static uint16_t read_port(char const *string) {
-    char *endptr;
-    errno = 0;
-    unsigned long port = strtoul(string, &endptr, 10);
-    if (errno != 0 || *endptr != 0 || port == 0 || port > UINT16_MAX) {
-        fatal("%s is not a valid port number", string);
-    }
-    return (uint16_t) port;
-}
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
