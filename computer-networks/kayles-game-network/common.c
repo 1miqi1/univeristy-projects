@@ -9,9 +9,28 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 #include "err.h"
 #include "common.h"
+
+bool bitset_get(const uint8_t *bitset, size_t index) {
+    if (!bitset) return false;
+    size_t byte_index = index / 8;
+    size_t bit_pos   = 7 - (index % 8);  // MSB = pion 0
+    return (bitset[byte_index] >> bit_pos) & 1;
+}
+
+
+void bitset_set(uint8_t *bitset, size_t index, bool value) {
+    if (!bitset) return;
+    size_t byte_index = index / 8;
+    size_t bit_pos   = 7 - (index % 8);  // MSB = pion 0
+    if (value)
+        bitset[byte_index] |= 1 << bit_pos;
+    else
+        bitset[byte_index] &= ~(1 << bit_pos);
+}
 
 
 int validate_number(const char* token, uint32_t* result) {

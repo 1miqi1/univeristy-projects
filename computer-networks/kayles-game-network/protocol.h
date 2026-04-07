@@ -18,6 +18,14 @@ typedef enum {
     MSG_GIVE_UP = 4,
 } MsgType;
 
+typedef enum {
+    MSG_JOIN_LENGHT = 5,
+    MSG_MOVE_1_LENGHT = 10,
+    MSG_MOVE_2_LENGHT = 10,
+    MSG_KEEP_ALIVE_LENGHT = 9,
+    MSG_GIVE_UP_LENGHT = 9,
+} MsgTypeLenghts;
+
 // ----------------------------
 // Parsing errors
 // ----------------------------
@@ -65,7 +73,7 @@ typedef struct {
     uint32_t player_b_id;   // id of player B (0 if none)
     uint8_t status;         // current game status (GameStatus)
     uint8_t max_pawn;       // max pawn number
-    uint8_t pawn_row[33];   // bitmap of pawns (floor(256/8)+1)
+    uint8_t *pawn_row;   // bitmap of pawns (floor(256/8)+1)
 } GameState;
 
 // ----------------------------
@@ -77,8 +85,6 @@ typedef struct {
 // Returns number of bytes written or -1 on error
 size_t serialize_client_message(const ClientMessage *msg, uint8_t *buf);
 
-// Deserialize ClientMessage
-int deserialize_client_message(ClientMessage *msg, const uint8_t *buf);
 
 // Parse error to string
 const char* parse_error_string(ParseResult err);
@@ -95,3 +101,7 @@ void print_client_message(const ClientMessage *msg);
 // Serialize GameState into buffer
 // Returns number of bytes written
 size_t serialize_game_state(const GameState *state, uint8_t *buf);
+
+int deserialize_client_message(ClientMessage *msg, const uint8_t *buf, size_t length, uint8_t *error_index);
+
+void handle_invalid_game(uint8_t *error_index);

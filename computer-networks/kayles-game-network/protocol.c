@@ -128,3 +128,67 @@ size_t serialize_client_message(const ClientMessage *msg, uint8_t *buf){
 
     return offset;
 }
+
+int deserialize_client_message(ClientMessage *msg, const uint8_t *buf, size_t length, uint8_t *error_index) {
+    if (!msg || !buf || !error_index) return -1;
+
+    size_t offset = 0;
+    *error_index = 0;
+
+    if (length < 1) {  // must have at least msg_type
+        *error_index = 0;
+        return -1;
+    }
+
+    msg->msg_type = buf[offset++];
+    switch (msg->msg_type) {
+        case MSG_JOIN:
+            if (length != MSG_JOIN_LENGHT) {  // 1 byte type + 4 byte player_id
+                *error_index = (length < MSG_JOIN_LENGHT) ? length : MSG_JOIN_LENGHT;
+                return -1;
+            }
+            msg->player_id = ntohl(*(uint32_t*)(buf + offset));
+            if (msg->player_id == 0) {  // invalid
+                *error_index = 1; // first invalid field
+                return -1;
+            }
+            msg->game_id = 0;
+            msg->pawn = 0;
+            break;
+
+        case MSG_MOVE_1:
+        case MSG_MOVE_2:
+            if (length != MSG_MOVE_2_LENGHT) { // type + player + game + pawn
+                *error_index = (length < MSG_MOVE_2_LENGHT) ? length : MSG_MOVE_2_LENGHT;
+                return -1;
+            }
+            msg->player_id = ntohl(*(uint32_t*)(buf + offset)); offset += 4;
+            msg->game_id   = ntohl(*(uint32_t*)(buf + offset)); offset += 4;
+            msg->pawn      = buf[offset];
+
+            break;
+
+        case MSG_KEEP_ALIVE:
+        case MSG_GIVE_UP:
+            if (length != MSG_GIVE_UP_LENGHT) { // type + player + game
+                *error_index = (length < MSG_GIVE_UP_LENGHT) ? length : MSG_GIVE_UP_LENGHT;
+                return -1;
+            }
+            msg->player_id = ntohl(*(uint32_t*)(buf + offset)); offset += 4;
+            msg->game_id   = ntohl(*(uint32_t*)(buf + offset)); offset += 4;
+            msg->pawn = 0;
+            break;
+
+        default:
+            *error_index = 0;
+            return -1; // unknown msg_type
+    }
+
+    return 0; // success
+}
+
+void handle_invalid_game(uint8_t *error_index){
+    *error_index = 5;
+}
+
+

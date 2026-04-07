@@ -14,7 +14,7 @@
 #include "common.h"
 #include "protocol.h"
 
-#define BUFFER_SIZE 10
+#define BUFFER_SIZE 12
 #define MAX_TIME  99
 #define INPUT_LENGHT 9
 
@@ -64,7 +64,7 @@ ServerInput parse_server_input(char *argv[]){
 
                 for(size_t j = 0; j < bytes; j++){
                     if(argv[i+1][j] == '1'){
-                        pawn_row[i / 8] |= 1 << (7 - (i % 8));
+                        bitset_set(pawn_row, i, true);
                     }else if(argv[i+1][j] != '0'){
                         free(pawn_row);
                         fatal("wrong format of pawn row: %s", argv[i+1]);
@@ -121,7 +121,7 @@ int main(int argc, char *argv[]) {
     ssize_t received_length;
     do {
         // Receive a message. Buffer should not be allocated on the stack.
-        static char buffer[BUFFER_SIZE];
+        static uint8_t buffer[BUFFER_SIZE];
         memset(buffer, 0, sizeof(buffer)); // Clean the buffer.
 
         int flags = 0;
@@ -136,8 +136,22 @@ int main(int argc, char *argv[]) {
 
         char const *client_ip = inet_ntoa(client_address.sin_addr);
         uint16_t client_port = ntohs(client_address.sin_port);
-        printf("received %zd bytes from %s:%" PRIu16 ": '%.*s'\n",
-               received_length, client_ip, client_port, (int) received_length, buffer);
+        printf("received %zd bytes from %s:%" PRIu16 "\n",
+        received_length, client_ip, client_port);
+
+        printf("bytes: ");
+        for (ssize_t i = 0; i < received_length; i++) {
+            printf("%02X ", (unsigned char)buffer[i]);
+        }
+        printf("\n");
+        
+        // validating the message
+        uint8_t error_index;
+        ClientMessage msg;
+        if(deserialize_client_message(&msg, buffer, received_length, &error_index)){
+
+        }
+        // 
 
         // Send the message back.
         int send_flags = 0;

@@ -15,7 +15,7 @@
 #include "protocol.h"
 
 #define MAX_TIME  99
-#define BUFFER_SIZE 10
+#define BUFFER_SIZE 14
 #define INPUT_LENGHT 9
 
 typedef struct {
@@ -123,13 +123,18 @@ int main(int argc, char *argv[]) {
     }
 
     serialize_client_message(&args.clientMessage, buf);
+    printf("sending to %s:%u\n", addr_str, ntohs(args.server_address.sin_port));
+    printf("bytes: ");
+    for (size_t i = 0; i < message_length; i++) {
+            printf("%02X ", (unsigned char)buf[i]);
+    }  
+    printf("\n");
 
     int send_flags = 0;
     socklen_t address_length = (socklen_t) sizeof(args.server_address);
     ssize_t sent_length = sendto(socket_fd, buf, message_length, send_flags,
                                     (struct sockaddr *) &args.server_address, address_length);
-    
-                              
+                     
     free(buf);
     
     if (sent_length < 0) {
@@ -138,9 +143,9 @@ int main(int argc, char *argv[]) {
         fatal("incomplete sending: expected %zu, sent %zd", message_length, sent_length);
     }
 
-    printf("sent to %s:%u\n", addr_str, ntohs(args.server_address.sin_port));
 
 
+    // Recieve a message
     static char buffer[BUFFER_SIZE];
     memset(buffer, 0, sizeof(buffer)); // Clean the buffer.
 
@@ -154,8 +159,13 @@ int main(int argc, char *argv[]) {
         syserr("recvfrom");
     }
 
-    printf("received %zd bytes from %s:%u: '%.*s'\n",
-            received_length, server_ip, server_port, (int) received_length, buffer);
+    printf("received %zd bytes from %s:%" PRIu16 "\n",
+        received_length, server_ip, server_port);
+
+    printf("bytes: ");
+    for (ssize_t i = 0; i < received_length; i++) {
+        printf("%02X ", (unsigned char)buffer[i]);
+    }
 
     close(socket_fd);
     return 0;

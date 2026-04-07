@@ -2,7 +2,7 @@
 - Creation of structures
 - Input parsing
 - Creating package
-- Recieving package
+- Recieving package Here "Nothing is sent" idk what is happening with buffer
 - Unpacking
 - Sending back
 - Game logic
