@@ -1,3 +1,4 @@
+#include <iostream>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <errno.h>
@@ -10,9 +11,12 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
+using namespace std;
+
 #include "err.h"
 #include "common.h"
 #include "protocol.h"
+#include "game.h"
 
 #define BUFFER_SIZE 12
 #define MAX_TIME  99
@@ -103,6 +107,10 @@ int main(int argc, char *argv[]) {
     }
 
     ServerInput args = parse_server_input(argv);
+
+    // Useful data:
+    map<uint8_t, *Game> games;
+    WrongMessage wrong_message;
 
     // Create a socket. Buffer should not be allocated on the stack.
     int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
