@@ -11,6 +11,7 @@
 
 #include "protocol.h"
 #include "common.h"
+#include "err.h"
 
 constexpr std::size_t MAX_MESSAGE_SIZE = 4;
 constexpr std::size_t MIN_MESSAGE_SIZE = 2;
@@ -228,15 +229,15 @@ bool deserialize_client_message(ClientMessage& msg,
                                 std::size_t recieved_length,
                                 std::uint8_t& error_index) {
     error_index = 0;
-    if (!recieved_lenght) return false;
+    if (!recieved_length) return false;
 
     std::size_t offset = 0;
     msg.msg_type = buf[offset++];
 
     switch (msg.msg_type) {
         case MSG_JOIN: {
-            if (recieved_lenght != MSG_JOIN_LENGTH) {
-                error_index = static_cast<std::uint8_t>(std::min(recieved_lenght, (std::size_t)MSG_JOIN_LENGTH));
+            if (recieved_length != MSG_JOIN_LENGTH) {
+                error_index = static_cast<std::uint8_t>(std::min( recieved_length, (std::size_t)MSG_JOIN_LENGTH));
                 return false;
             }
 
@@ -256,8 +257,8 @@ bool deserialize_client_message(ClientMessage& msg,
         case MSG_MOVE_1:
         case MSG_MOVE_2: {
             const std::size_t expected = (msg.msg_type == MSG_MOVE_1) ? MSG_MOVE_1_LENGTH : MSG_MOVE_2_LENGTH;
-            if (recieved_lenght != expected) {
-                error_index = static_cast<std::uint8_t>(std::min(recieved_lenght, expected));
+            if (recieved_length != expected) {
+                error_index = static_cast<std::uint8_t>(std::min(recieved_length, expected));
                 return false;
             }
 
@@ -278,8 +279,8 @@ bool deserialize_client_message(ClientMessage& msg,
         case MSG_KEEP_ALIVE:
         case MSG_GIVE_UP: {
             const std::size_t expected = (msg.msg_type == MSG_KEEP_ALIVE) ? MSG_KEEP_ALIVE_LENGTH : MSG_GIVE_UP_LENGTH;
-            if (recieved_lenght != expected) {
-                error_index = static_cast<std::uint8_t>(std::min(recieved_lenght, expected));
+            if (recieved_length != expected) {
+                error_index = static_cast<std::uint8_t>(std::min(recieved_length, expected));
                 return false;
             }
 
@@ -344,16 +345,22 @@ bool deserialize(WrongMessage& wrong_message, std::span<const std::uint8_t> buf)
 }
 
 bool deserialize(ServerResponse& msg, std::span<const std::uint8_t> buf) {
-    if (buf.size() < CLIENT_MESSAGE_PREFIX_SIZE + 1) return false;
+    if (buf.size() < CLIENT_MESSAGE_PREFIX_SIZE + 1){
+        return false;
+    }
 
     if (buf[CLIENT_MESSAGE_PREFIX_SIZE] == WRONG_MESSAGE_STATUS) {
         WrongMessage wm;
-        if (!deserialize(wm, buf)) return false;
+        if (!deserialize(wm, buf)){
+            return false;
+        }
         msg.response_type = MSG_WRONG_MESSAGE;
         msg.response = wm;
     } else {
         GameState gs;
-        if (!deserialize(gs, buf)) return false;
+        if (!deserialize(gs, buf)){
+            return false;
+        }
         msg.response_type = MSG_CORRECT_MESSAGE;
         msg.response = gs;
     }
@@ -389,7 +396,7 @@ void print(const GameState& gs) {
               << "\n  max pawn     : " << static_cast<unsigned>(gs.max_pawn) 
               << "\n  pawn row     : ";
     for (std::size_t pawn = 0; pawn < gs.max_pawn; ++pawn) {
-        std::uint8_t bit = 0;
+        uint8_t bit;
         bitset_get(gs.pawn_row, pawn, bit);
         std::cout << static_cast<unsigned>(bit);
     }

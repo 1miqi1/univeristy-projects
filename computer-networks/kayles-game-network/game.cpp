@@ -41,7 +41,7 @@ Game create_full_game(std::uint32_t game_id,
 // Checks whether given player belongs to this game as player A or B.
 bool check_my_game(const std::map<std::uint32_t, Game>& games, std::uint32_t player_id, std::uint32_t game_id){
     auto it = games.find(game_id);
-    
+
     if (it == games.end()) {
         return false; 
     }

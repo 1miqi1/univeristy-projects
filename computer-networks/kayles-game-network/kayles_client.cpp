@@ -9,21 +9,11 @@
 #include <cstdio>
 #include <iostream>
 #include <span>
+#include <set>
 
-/**
- * Maximum allowed client timeout value.
- */
-#define MAX_TIME 99
-
-/**
- * Size of buffer used for sending/receiving messages.
- */
-#define BUFFER_SIZE 1024
-
-/**
- * Expected number of command-line arguments.
- */
-#define INPUT_LENGTH 9
+constexpr int MAX_TIME = 99;
+constexpr std::size_t BUFFER_SIZE = 1024;
+constexpr int INPUT_LENGTH = 9;
 
 #include "err.h"
 #include "common.h"
@@ -34,7 +24,7 @@
  */
 struct ClientInput {
     uint16_t port = 0;                    /**< Server port number */
-    uint32_t client_timeout = 0;          /**< Client timeout value */
+    time_t client_timeout = 0;          /**< Client timeout value */
     sockaddr_in server_address{};         /**< Resolved server address */
     ClientMessage clientMessage{};        /**< Parsed client message */
 };
@@ -49,36 +39,42 @@ struct ClientInput {
  * @return Parsed ClientInput structure
  * @throws fatal() on invalid input
  */
-ClientInput parse_client_input(char *argv[]) {
-    ClientInput args;
-    bool port_found = false;
+ClientInput parse_client_input(char *argv[], int argc) {
+    if (argc < INPUT_LENGTH) {
+        fatal("usage: %s -p <port> -a <address> -m <message> -t <client_timeout>", argv[0]);
+    }
 
-    for (int i = 1; i < INPUT_LENGTH; i += 2) {
+    ClientInput args;
+    std::set<char> flags;
+
+    for (int i = 1; i < argc; i+= 2) {
         if (std::strlen(argv[i]) < 2 || argv[i][0] != '-') {
             fatal("wrong input: %s", argv[i]);
         }
 
-        if (argv[i][1] == 'p') {
+        if (argv[i][1] == 'p' && !flags.count('p')) {
             args.port = read_port(argv[i + 1]);
-            port_found = true;
-            break;
+            flags.insert('p');
         }
     }
 
-    if (!port_found) {
+    if (!flags.count('p')) {
         fatal("missing required option: -p");
     }
 
-    for (int i = 1; i < INPUT_LENGTH; i += 2) {
+    for (int i = 1; i < argc; i+= 2) {
+        if(flags.count(argv[i][1])){
+            continue;
+        }
+        flags.insert(argv[i][1]);
         switch (argv[i][1]) {
             case 'p':
                 break;
-
-            case 'a':
+            case 'a':{
                 args.server_address = get_server_address(argv[i + 1], args.port);
                 break;
-
-            case 'm': {
+            }
+            case 'm':{
                 ParseResult res = parse_client_message(argv[i + 1], args.clientMessage);
 
                 if (res.status != PARSE_OK) {
@@ -90,8 +86,7 @@ ClientInput parse_client_input(char *argv[]) {
                 }
                 break;
             }
-
-            case 't': {
+            case 't':{
                 uint32_t value = 0;
 
                 if (!validate_number(argv[i + 1], value)) {
@@ -105,12 +100,13 @@ ClientInput parse_client_input(char *argv[]) {
                 args.client_timeout = value;
                 break;
             }
-
             default:
                 fatal("unknown option: %s", argv[i]);
         }
     }
-
+    if(!(flags.count('p') && flags.count('a') && flags.count('t') && flags.count('m'))){
+        fatal("not all options provided");
+    }
     return args;
 }
 
@@ -130,22 +126,15 @@ ClientInput parse_client_input(char *argv[]) {
 int main(int argc, char *argv[]) {
 
     // ----------------------------
-    // Argument validation
+    // Argument validation adn input parsing
     // ----------------------------
-    if (argc != INPUT_LENGTH) {
-        fatal("usage: %s -p <port> -a <address> -m <message> -t <client_timeout>", argv[0]);
-    }
+    ClientInput args = parse_client_input(argv, argc);
 
     // ----------------------------
     // Buffer initialization
     // ----------------------------
     std::uint8_t buf[BUFFER_SIZE];
     std::memset(buf, 0, sizeof(buf));
-
-    // ----------------------------
-    // Input parsing
-    // ----------------------------
-    ClientInput args = parse_client_input(argv);
 
     // ----------------------------
     // Address formatting (for logging)
@@ -155,12 +144,7 @@ int main(int argc, char *argv[]) {
         syserr("inet_ntop");
     }
 
-    uint16_t server_port = ntohs(args.server_address.sin_port);
 
-    // ----------------------------
-    // Debug: print parsed message
-    // ----------------------------
-    print(args.clientMessage);
 
     // ----------------------------
     // Socket creation
@@ -180,8 +164,6 @@ int main(int argc, char *argv[]) {
         close(socket_fd);
         fatal("serialize_client_message failed");
     }
-
-    std::printf("sending to %s:%u\n", addr_str, server_port);
 
     // ----------------------------
     // Sending message to server
@@ -213,11 +195,21 @@ int main(int argc, char *argv[]) {
     // ----------------------------
     // Receiving response from server
     // ----------------------------
+    struct timeval timeout;
+    timeout.tv_sec = args.client_timeout;   
+    timeout.tv_usec = 0;
+
+    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
     ssize_t received_length = recvfrom(socket_fd, buf, BUFFER_SIZE, receive_flags,
                                        reinterpret_cast<struct sockaddr *>(&receive_address),
                                        &address_length);
 
     if (received_length < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            std::cout << "Client waited: " << args.client_timeout << "s, but server didn't respond. " << "\n";
+            exit(0);
+        }
         close(socket_fd);
         syserr("recvfrom");
     }
@@ -238,6 +230,9 @@ int main(int argc, char *argv[]) {
         std::printf("%02X ", buf[i]);
     }
     std::printf("\n");
+
+    ServerResponse server_response;
+    deserialize(server_response, buf);
 
     // ----------------------------
     // Cleanup
