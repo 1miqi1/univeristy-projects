@@ -1,63 +1,90 @@
-#include <sys/types.h>
 #include <sys/socket.h>
-#include <errno.h>
 #include <inttypes.h>
-#include <limits.h>
-#include <netdb.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+
+#include <cstdint>
+#include <cstddef>
+#include <cstring>
+#include <cstdio>
+#include <iostream>
+#include <span>
+
+/**
+ * Maximum allowed client timeout value.
+ */
+#define MAX_TIME 99
+
+/**
+ * Size of buffer used for sending/receiving messages.
+ */
+#define BUFFER_SIZE 1024
+
+/**
+ * Expected number of command-line arguments.
+ */
+#define INPUT_LENGTH 9
 
 #include "err.h"
 #include "common.h"
 #include "protocol.h"
 
-#define MAX_TIME  99
-#define BUFFER_SIZE 14
-#define INPUT_LENGHT 9
+/**
+ * Structure holding parsed client input parameters.
+ */
+struct ClientInput {
+    uint16_t port = 0;                    /**< Server port number */
+    uint32_t client_timeout = 0;          /**< Client timeout value */
+    sockaddr_in server_address{};         /**< Resolved server address */
+    ClientMessage clientMessage{};        /**< Parsed client message */
+};
 
-typedef struct {
-    uint16_t port;
-    uint32_t client_timeout;
-    struct sockaddr_in server_address;
-    ClientMessage clientMessage;
-} ClientInput;
-
-ClientInput parse_client_input(char *argv[]){
+/**
+ * Parses command-line arguments into a ClientInput structure.
+ *
+ * Expected format:
+ *   -p <port> -a <address> -m <message> -t <timeout>
+ *
+ * @param argv  Command-line arguments
+ * @return Parsed ClientInput structure
+ * @throws fatal() on invalid input
+ */
+ClientInput parse_client_input(char *argv[]) {
     ClientInput args;
-    char *host = NULL;
+    bool port_found = false;
 
-    for (int i = 1; i < INPUT_LENGHT; i += 2){
-        if(sizeof(argv[i]) < 2*sizeof(uint8_t) || argv[i][0] != '-'){
+    for (int i = 1; i < INPUT_LENGTH; i += 2) {
+        if (std::strlen(argv[i]) < 2 || argv[i][0] != '-') {
             fatal("wrong input: %s", argv[i]);
         }
-        if(argv[i][1] == 'p'){
+
+        if (argv[i][1] == 'p') {
             args.port = read_port(argv[i + 1]);
+            port_found = true;
             break;
         }
     }
 
-    for (int i = 1; i < INPUT_LENGHT; i += 2) {
+    if (!port_found) {
+        fatal("missing required option: -p");
+    }
+
+    for (int i = 1; i < INPUT_LENGTH; i += 2) {
         switch (argv[i][1]) {
             case 'p':
                 break;
 
-            case 'a': {
-                host = argv[i + 1];
-                args.server_address = get_server_address(host, args.port);
+            case 'a':
+                args.server_address = get_server_address(argv[i + 1], args.port);
                 break;
-            }
 
             case 'm': {
-                ParseResult res = parse_client_message(argv[i + 1], &args.clientMessage);
+                ParseResult res = parse_client_message(argv[i + 1], args.clientMessage);
+
                 if (res.status != PARSE_OK) {
                     if (res.status == PARSE_ERR_RESOURCE) {
-                        // System level failure (e.g. strdup failed)
                         syserr("parsing system error: %s", res.msg);
                     } else {
-                        // User/Protocol level failure
                         fatal("wrong client message '%s': %s", argv[i + 1], res.msg);
                     }
                 }
@@ -65,14 +92,16 @@ ClientInput parse_client_input(char *argv[]){
             }
 
             case 't': {
-                uint32_t value;
-                // Using the updated validate_number return logic
-                if (validate_number(argv[i + 1], &value) != 0) {
+                uint32_t value = 0;
+
+                if (!validate_number(argv[i + 1], value)) {
                     fatal("wrong format of client timeout: %s", argv[i + 1]);
                 }
+
                 if (value == 0 || value > MAX_TIME) {
                     fatal("client timeout out of range (1-%u): %s", MAX_TIME, argv[i + 1]);
                 }
+
                 args.client_timeout = value;
                 break;
             }
@@ -85,88 +114,134 @@ ClientInput parse_client_input(char *argv[]){
     return args;
 }
 
+/**
+ * Entry point of the client application.
+ *
+ * Responsibilities:
+ *  - Parse input arguments
+ *  - Serialize and send client message
+ *  - Receive and deserialize server response
+ *  - Print results
+ *
+ * @param argc  Argument count
+ * @param argv  Argument vector
+ * @return 0 on success
+ */
 int main(int argc, char *argv[]) {
-    if (argc != INPUT_LENGHT) {
-        fatal("usage: %s -p <port> -a <address> -m <message> -t <client_timeout>\n", argv[0]);
+
+    // ----------------------------
+    // Argument validation
+    // ----------------------------
+    if (argc != INPUT_LENGTH) {
+        fatal("usage: %s -p <port> -a <address> -m <message> -t <client_timeout>", argv[0]);
     }
 
+    // ----------------------------
+    // Buffer initialization
+    // ----------------------------
+    std::uint8_t buf[BUFFER_SIZE];
+    std::memset(buf, 0, sizeof(buf));
+
+    // ----------------------------
+    // Input parsing
+    // ----------------------------
     ClientInput args = parse_client_input(argv);
 
-
-    // Convert IP to string for logging
+    // ----------------------------
+    // Address formatting (for logging)
+    // ----------------------------
     char addr_str[INET_ADDRSTRLEN];
-    if (inet_ntop(AF_INET, &args.server_address.sin_addr, addr_str, sizeof(addr_str)) == NULL) {
+    if (inet_ntop(AF_INET, &args.server_address.sin_addr, addr_str, sizeof(addr_str)) == nullptr) {
         syserr("inet_ntop");
     }
 
-    char const *server_ip = inet_ntoa(args.server_address.sin_addr);
     uint16_t server_port = ntohs(args.server_address.sin_port);
 
-    printf("Formatted output:\n");
-    printf("port: %u\n", args.port);
-    printf("client timeout: %" PRIu32 "\n", args.client_timeout);
-    printf("address: %s\n", addr_str);
+    // ----------------------------
+    // Debug: print parsed message
+    // ----------------------------
+    print(args.clientMessage);
 
-    print_client_message(&args.clientMessage);
-
-    // Communication start
+    // ----------------------------
+    // Socket creation
+    // ----------------------------
     int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0) {
         syserr("cannot create a socket");
     }
 
-    size_t message_length = get_client_message_size(&args.clientMessage);
-    uint8_t *buf = malloc(message_length * sizeof(uint8_t));
+    // ----------------------------
+    // Serialization of client message
+    // ----------------------------
+    std::size_t written =
+        serialize_client_message(args.clientMessage, std::span<std::uint8_t>(buf, BUFFER_SIZE));
 
-    if (!buf) {       
-        syserr("malloc failed for message buffer");
+    if (written == 0) {
+        close(socket_fd);
+        fatal("serialize_client_message failed");
     }
 
-    serialize_client_message(&args.clientMessage, buf);
-    printf("sending to %s:%u\n", addr_str, ntohs(args.server_address.sin_port));
-    printf("bytes: ");
-    for (size_t i = 0; i < message_length; i++) {
-            printf("%02X ", (unsigned char)buf[i]);
-    }  
-    printf("\n");
+    std::printf("sending to %s:%u\n", addr_str, server_port);
 
+    // ----------------------------
+    // Sending message to server
+    // ----------------------------
     int send_flags = 0;
-    socklen_t address_length = (socklen_t) sizeof(args.server_address);
-    ssize_t sent_length = sendto(socket_fd, buf, message_length, send_flags,
-                                    (struct sockaddr *) &args.server_address, address_length);
-                     
-    free(buf);
-    
+    socklen_t address_length = static_cast<socklen_t>(sizeof(args.server_address));
+
+    ssize_t sent_length = sendto(socket_fd, buf, written, send_flags,
+                                 reinterpret_cast<struct sockaddr *>(&args.server_address),
+                                 address_length);
+
     if (sent_length < 0) {
+        close(socket_fd);
         syserr("sendto");
-    } else if ((size_t) sent_length != message_length) {
-        fatal("incomplete sending: expected %zu, sent %zd", message_length, sent_length);
+    } else if (static_cast<std::size_t>(sent_length) != written) {
+        close(socket_fd);
+        fatal("incomplete sending: expected %zu, sent %zd", written, sent_length);
     }
 
+    // ----------------------------
+    // Prepare buffer for receiving
+    // ----------------------------
+    std::memset(buf, 0, sizeof(buf));
 
-
-    // Recieve a message
-    static char buffer[BUFFER_SIZE];
-    memset(buffer, 0, sizeof(buffer)); // Clean the buffer.
-
-    size_t max_length = sizeof(buffer);
     int receive_flags = 0;
-    struct sockaddr_in receive_address;
-    address_length = (socklen_t) sizeof(receive_address);
-    ssize_t received_length = recvfrom(socket_fd, buffer, max_length, receive_flags,
-                                        (struct sockaddr *) &receive_address, &address_length);
+    sockaddr_in receive_address{};
+    address_length = static_cast<socklen_t>(sizeof(receive_address));
+
+    // ----------------------------
+    // Receiving response from server
+    // ----------------------------
+    ssize_t received_length = recvfrom(socket_fd, buf, BUFFER_SIZE, receive_flags,
+                                       reinterpret_cast<struct sockaddr *>(&receive_address),
+                                       &address_length);
+
     if (received_length < 0) {
+        close(socket_fd);
         syserr("recvfrom");
     }
 
-    printf("received %zd bytes from %s:%" PRIu16 "\n",
-        received_length, server_ip, server_port);
-
-    printf("bytes: ");
-    for (ssize_t i = 0; i < received_length; i++) {
-        printf("%02X ", (unsigned char)buffer[i]);
+    // ----------------------------
+    // Address formatting (response sender)
+    // ----------------------------
+    char recv_addr_str[INET_ADDRSTRLEN];
+    if (inet_ntop(AF_INET, &receive_address.sin_addr, recv_addr_str, sizeof(recv_addr_str)) == nullptr) {
+        close(socket_fd);
+        syserr("inet_ntop");
     }
 
+    // ----------------------------
+    // Print server response
+    // ----------------------------
+    for (ssize_t i = 0; i < received_length; i++) {
+        std::printf("%02X ", buf[i]);
+    }
+    std::printf("\n");
+
+    // ----------------------------
+    // Cleanup
+    // ----------------------------
     close(socket_fd);
     return 0;
 }

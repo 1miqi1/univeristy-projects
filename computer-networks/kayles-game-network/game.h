@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <ctime>
 #include <vector>
+#include <map>
 
 #include "protocol.h"
 
@@ -36,18 +37,19 @@ GameState create_game_state(std::uint32_t game_id,
  * @return Fully initialized Game structure
  */
 Game create_full_game(std::uint32_t game_id,
-                      std::uint8_t max_pawns,
-                      std::vector<std::uint8_t>& pawn_row,
+                      std::uint8_t max_pawn,
+                      const std::vector<std::uint8_t>& pawn_row,
                       std::uint8_t pawns_left);
 
 /**
  * Checks if a given player participates in the game.
  *
- * @param game        Game instance
+ * @param games       All games
  * @param player_id   Player identifier
+ * @param game_id     Game identifier
  * @return true if player is part of the game, false otherwise
  */
-bool check_my_game(Game &game, std::uint32_t player_id);
+bool check_my_game(const std::map<std::uint32_t, Game>& games, std::uint32_t player_id, std::uint32_t game_id);
 
 /**
  * Checks if it is the given player's turn.
@@ -56,7 +58,7 @@ bool check_my_game(Game &game, std::uint32_t player_id);
  * @param player_id   Player identifier
  * @return true if it is player's turn, false otherwise
  */
-bool check_my_turn(Game &game, std::uint32_t player_id);
+bool check_my_turn(const Game &game, std::uint32_t player_id);
 
 /**
  * Adds a player to the game.
@@ -64,8 +66,9 @@ bool check_my_turn(Game &game, std::uint32_t player_id);
  *
  * @param game        Game instance
  * @param player_id   Player identifier
+ * @return true if second player joined
  */
-void join_game(Game &game, std::uint32_t player_id);
+bool join_game(Game &game, std::uint32_t player_id);
 
 /**
  * Performs move removing a single pawn.

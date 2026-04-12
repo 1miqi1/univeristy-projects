@@ -1,55 +1,30 @@
-# -------------------------------
-# Makefile for Kayles client & server
-# -------------------------------
+# Compiler and flags
+CXX = g++
+# Set to c++23 for the latest features, including full span support
+CXXFLAGS = -Wall -Wextra -O2 -std=c++23
+LDFLAGS =
 
-# Compilers
-CC     = gcc
-CXX    = g++
-
-# Flags
-CFLAGS   = -Wall -Wextra -O2 -std=gnu17 -g -fsanitize=address
-CXXFLAGS = -Wall -Wextra -O2 -std=c++17 -g -fsanitize=address
-
-# Include directories
-INCDIRS = -I/usr/local/include
-
-# Libraries for server
-LIBS    = -lpthread        # only link libraries you actually have
-LDFLAGS_SERVER = -fsanitize=address $(LIBS)
+# Module objects
+MODULE_OBJS = common.o err.o game.o protocol.o
 
 # Targets
-TARGET_CLIENT = kayles_client
-TARGET_SERVER = kayles_server
-
-# Source files
-C_SRCS   = err.c common.c protocol.c game.c kayles_client.c
-CPP_SRCS = kayles_server.cpp
-
-OBJ_C   = $(C_SRCS:.c=.o)
-OBJ_CPP = $(CPP_SRCS:.cpp=.o)
+TARGETS = kayles_client kayles_server
 
 .PHONY: all clean
 
-# Default target
-all: $(TARGET_CLIENT) $(TARGET_SERVER)
+all: $(TARGETS)
 
-# Link client
-$(TARGET_CLIENT): $(OBJ_C)
-	$(CC) $(CFLAGS) -o $@ $^
+# Link the client
+kayles_client: kayles_client.o $(MODULE_OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $^
 
-# Link server
-# Note: server object depends on all C objects except kayles_client.o
-$(TARGET_SERVER): $(OBJ_CPP) $(filter-out kayles_client.o, $(OBJ_C))
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS_SERVER)
+# Link the server
+kayles_server: kayles_server.o $(MODULE_OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $^
 
-# Compile C files
-%.o: %.c
-	$(CC) $(CFLAGS) $(INCDIRS) -c $< -o $@
-
-# Compile C++ files
+# Rule for object files
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) $(INCDIRS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Clean build files
 clean:
-	rm -f $(TARGET_CLIENT) $(TARGET_SERVER) *.o *~
+	rm -f *.o $(TARGETS)

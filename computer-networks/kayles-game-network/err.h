@@ -1,13 +1,11 @@
-#ifndef ERR_H
-#define ERR_H
+#ifndef ERR_HPP
+#define ERR_HPP
 
-#include <stdnoreturn.h>     // C11
+#include <cstdio>
+#include <cstdarg>
 
-// Print information about a system error and quits.
-noreturn void syserr(const char* fmt, ...);
+[[noreturn]] void syserr(const char* fmt, ...);
 
-// Print information about an error and quits.
-noreturn void fatal(const char* fmt, ...);
+[[noreturn]] void fatal(const char* fmt, ...);
 
-
-#endif
+#endif 

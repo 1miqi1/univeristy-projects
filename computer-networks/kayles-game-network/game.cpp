@@ -1,6 +1,8 @@
+#include <iostream>
 #include <cstdint>
 #include <ctime>
 #include <vector>
+#include <map>
 
 #include "common.h"
 #include "err.h"
@@ -11,14 +13,14 @@ constexpr std::size_t BYTE_SIZE = 8;
 // Creates basic logical game state.
 // Initializes players as not joined yet and sets initial board layout.
 GameState create_game_state(std::uint32_t game_id,
-                      std::uint8_t max_pawns,
+                      std::uint8_t max_pawn,
                       const std::vector<std::uint8_t>& pawn_row) {
     GameState game_state{};
     game_state.game_id = game_id;
     game_state.player_a_id = 0;
     game_state.player_b_id = 0;
     game_state.status = 0;
-    game_state.max_pawn = max_pawns;
+    game_state.max_pawn = max_pawn;
     game_state.pawn_row = pawn_row;
     return game_state;
 }
@@ -37,9 +39,15 @@ Game create_full_game(std::uint32_t game_id,
 }
 
 // Checks whether given player belongs to this game as player A or B.
-bool check_my_game(const Game& game, std::uint32_t player_id) {
-    return game.game_state.player_a_id == player_id ||
-           game.game_state.player_b_id == player_id;
+bool check_my_game(const std::map<std::uint32_t, Game>& games, std::uint32_t player_id, std::uint32_t game_id){
+    auto it = games.find(game_id);
+    
+    if (it == games.end()) {
+        return false; 
+    }
+
+    return it->second.game_state.player_a_id == player_id ||
+           it->second.game_state.player_b_id == player_id;
 }
 
 // Checks whether it is currently the given player's turn.
@@ -58,12 +66,14 @@ bool check_my_turn(const Game& game, std::uint32_t player_id) {
 // Adds player to the game.
 // First joining player becomes A.
 // Second joining player becomes B and starts the game with player A's turn.
-void join_game(Game& game, std::uint32_t player_id) {
+bool join_game(Game& game, std::uint32_t player_id) {
     if (game.game_state.player_a_id == 0) {
         game.game_state.player_a_id = player_id;
+        return false;
     } else {
         game.game_state.player_b_id = player_id;
         game.game_state.status = TURN_A;
+        return true;
     }
 }
 

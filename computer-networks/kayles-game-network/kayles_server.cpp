@@ -2,14 +2,16 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <errno.h>
-#include <inttypes.h>
-#include <limits.h>
+#include <cinttypes>
+#include <climits>
 #include <netdb.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <map>
+#include <vector>
 
 using namespace std;
 
@@ -20,34 +22,49 @@ using namespace std;
 
 #define BUFFER_SIZE 12
 #define MAX_TIME  99
-#define INPUT_LENGHT 9
-
+#define INPUT_LENGTH 9 
+#define MAX_GAME_ID UINT32_MAX // Fixed bitshift precedence bug
+#define MAX_PAWN_ROW_LENGTH  256
 
 typedef struct {
-    uint8_t* pawn_row;
-    struct sockaddr_in server_address;
-    uint16_t port;
-    uint32_t server_timeout;
+    vector<uint8_t> pawn_row;
+    uint8_t max_pawn = 0;
+    uint8_t pawns_left = 0;
+    struct sockaddr_in server_address = {};
+    uint16_t port = 0;
+    uint32_t server_timeout = 0;
 } ServerInput;
 
-ServerInput parse_server_input(char *argv[]){
+ServerInput parse_server_input(int argc, char *argv[]) {
     ServerInput args;
     char *host = NULL;
+    bool port_found = false;
 
-    for (int i = 1; i < INPUT_LENGHT; i += 2){
-        if(sizeof(argv[i]) < 2*sizeof(uint8_t) || argv[i][0] != '-'){
+    if (argc != INPUT_LENGTH) {
+        fatal("usage: %s -r <pawn row> -a <address> -p <port> -t <client_timeout>\n", argv[0]);
+    }
+
+    // 1. Find the port first
+    for (int i = 1; i < INPUT_LENGTH; i += 2) {
+        if (std::strlen(argv[i]) < 2 || argv[i][0] != '-') {
             fatal("wrong input: %s", argv[i]);
         }
-        if(argv[i][1] == 'p'){
+        if (argv[i][1] == 'p') {
             args.port = read_port(argv[i + 1]);
+            port_found = true;
             break;
         }
     }
 
-    for (int i = 1; i < INPUT_LENGHT; i += 2) {
+    if (!port_found) {
+        fatal("missing required option: -p");
+    }
+
+    // 2. Parse remaining arguments
+    for (int i = 1; i < INPUT_LENGTH; i += 2) {
         switch (argv[i][1]) {
             case 'p':
-                break;
+                break; // Handled above
 
             case 'a': {
                 host = argv[i + 1];
@@ -57,31 +74,36 @@ ServerInput parse_server_input(char *argv[]){
 
             case 'r': {
                 size_t len = strlen(argv[i+1]);
-                if(len > MAX_UINT8 || len == 0){
-                    fatal("pawn raw lenght out of range (1-%u): %s", MAX_PAWN_ROW_LENGHT, argv[i+1]);
+                if(len > MAX_PAWN_ROW_LENGTH || len == 0) {
+                    fatal("pawn row length out of range (1-%u): %s", MAX_PAWN_ROW_LENGTH, argv[i+1]);
                 }
-                size_t bytes = (len + 7) / 8;
-                uint8_t *pawn_row = (uint8_t *) calloc(bytes, sizeof(uint8_t));
-                if(!pawn_row){
-                    syserr("malloc failed for pawn row");
-                }
+                
+                args.max_pawn = len; // Removed the -1, assuming length represents total pawns
 
-                for(size_t j = 0; j < bytes; j++){
-                    if(argv[i+1][j] == '1'){
-                        bitset_set(pawn_row, i, true);
-                    }else if(argv[i+1][j] != '0'){
-                        free(pawn_row);
+                // Allocate exactly the number of bytes needed for bits, initialized to 0
+                size_t bytes = (len + 7) / 8;
+                args.pawn_row.assign(bytes, 0); 
+                args.pawns_left = 0;
+
+                for(size_t j = 0; j < len; j++) {
+                    if(argv[i+1][j] == '1') {
+                        // Pack bits safely: j is the correct index, NOT i!
+                        args.pawn_row[j / 8] |= (1 << (j % 8)); 
+                        args.pawns_left += 1;
+                    } else if(argv[i+1][j] != '0') {
+                        // vector cleans up its own memory on fatal exit
                         fatal("wrong format of pawn row: %s", argv[i+1]);
                     }
                 }
-                args.pawn_row = pawn_row;
+                if(args.pawns_left == 0) {
+                    fatal("there should be at least one '1' in row: %s", argv[i+1]);
+                }
                 break;
             }
 
             case 't': {
                 uint32_t value;
-                // Using the updated validate_number return logic
-                if (validate_number(argv[i + 1], &value) != 0) {
+                if (!validate_number(argv[i + 1], value)) {
                     fatal("wrong format of client timeout: %s", argv[i + 1]);
                 }
                 if (value == 0 || value > MAX_TIME) {
@@ -95,85 +117,126 @@ ServerInput parse_server_input(char *argv[]){
                 fatal("unknown option: %s", argv[i]);
         }
     }
-
     return args;
-
 }
 
 
 int main(int argc, char *argv[]) {
-    if (argc != INPUT_LENGHT) {
-        fatal("usage: %s -r <pawn row> -a <address> -p <port> -t <client_timeout>\n", argv[0]);
-    }
+    // Pass argc and argv to the updated parser
+    ServerInput args = parse_server_input(argc, argv); 
 
-    ServerInput args = parse_server_input(argv);
-
-    // Useful data:
-    map<uint8_t, *Game> games;
+    map<uint32_t, Game> games; // Use uint32_t to match your game ID limits
     WrongMessage wrong_message;
+    ClientMessage client_message;
+    ServerResponse server_response;
+    
+    bool has_waiting_game = false; // Renamed from empty_game for clarity
+    size_t current_id = 0;
 
-    // Create a socket. Buffer should not be allocated on the stack.
     int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0) {
         syserr("cannot create a socket");
     }
 
-    // Bind the socket to a concrete address.
     if (bind(socket_fd, (struct sockaddr *) &args.server_address, (socklen_t) sizeof(args.server_address)) < 0) {
         syserr("bind");
     }
 
-    printf("listening on port %" PRIu16 "\n", args.port);
+    cout << "listening on port" << args.port << "\n";
+    cout << "HELLO\n";
 
-    
+    uint8_t buffer[BUFFER_SIZE]; // Declare once outside the loop to avoid redeclaration issues
     ssize_t received_length;
-    do {
-        // Receive a message. Buffer should not be allocated on the stack.
-        static uint8_t buffer[BUFFER_SIZE];
-        memset(buffer, 0, sizeof(buffer)); // Clean the buffer.
 
-        int flags = 0;
+    do {
+        cout << "HELLO";
+        memset(buffer, 0, sizeof(buffer)); 
         struct sockaddr_in client_address;
         socklen_t address_length = (socklen_t) sizeof(client_address);
 
-        received_length = recvfrom(socket_fd, buffer, BUFFER_SIZE, flags,
+        received_length = recvfrom(socket_fd, buffer, BUFFER_SIZE, 0,
                                    (struct sockaddr *) &client_address, &address_length);
         if (received_length < 0) {
             syserr("recvfrom");
         }
 
-        char const *client_ip = inet_ntoa(client_address.sin_addr);
-        uint16_t client_port = ntohs(client_address.sin_port);
-        printf("received %zd bytes from %s:%" PRIu16 "\n",
-        received_length, client_ip, client_port);
-
-        printf("bytes: ");
-        for (ssize_t i = 0; i < received_length; i++) {
-            printf("%02X ", (unsigned char)buffer[i]);
-        }
-        printf("\n");
         
-        // validating the message
-        uint8_t error_index;
-        ClientMessage msg;
-        if(deserialize_client_message(&msg, buffer, received_length, &error_index)){
-
+        uint8_t error_index = 0;
+        cout << "HELLO\n";
+        
+        // 1. Message Validation
+        if (!deserialize_client_message(client_message, buffer, received_length, error_index)) {
+            cout << "Deserialized" << error_index << "\n";
+            create_wrong_message(wrong_message,
+                     std::span<const std::uint8_t>(buffer, BUFFER_SIZE),
+                     error_index);
+            server_response.response_type = MSG_WRONG_MESSAGE;
+            server_response.response = wrong_message;
+        } 
+        else if (!check_my_game(games, client_message.game_id, client_message.player_id)) {
+            cout << "wrong game\n";
+            handle_invalid_game(error_index);
+            create_wrong_message(wrong_message,
+                     std::span<const std::uint8_t>(buffer, BUFFER_SIZE),
+                     error_index);
+            server_response.response_type = MSG_WRONG_MESSAGE; 
+            server_response.response = wrong_message;
         }
-        // 
+        else {
+            print(client_message);
+            if (client_message.msg_type == MSG_JOIN) {
+                if (!has_waiting_game) {
+                    if (current_id == MAX_GAME_ID) {
+                        continue; // Reached maximum game limit
+                    }
+                    current_id++;
+                    games[current_id] = create_full_game(client_message.game_id, args.max_pawn, args.pawn_row, args.pawns_left);
+                    has_waiting_game = true;
+                } else {
+                    // A second player joined, the game is no longer waiting
+                    has_waiting_game = false; 
+                }
+                join_game(games[current_id], client_message.player_id);
+                server_response.response = games[current_id].game_state;
+            } 
+            else {
+                // Must use the game_id from the client, NOT the current_id of the server!
+                uint32_t target_game = client_message.game_id; 
+                
+                if (check_my_turn(games[target_game], client_message.player_id)) {
+                    switch (client_message.msg_type) {
+                        case MSG_MOVE_1:
+                            make_move_1(games[target_game], client_message.pawn);
+                            break;
+                        case MSG_MOVE_2:
+                            make_move_2(games[target_game], client_message.pawn);
+                            break;
+                        case MSG_GIVE_UP:
+                            give_up(games[target_game]);
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                server_response.response = games[target_game].game_state;
+            }
+            server_response.response_type = MSG_CORRECT_MESSAGE;
+        }
 
-        // Send the message back.
-        int send_flags = 0;
-        ssize_t sent_length = sendto(socket_fd, buffer, received_length, send_flags,
+        // 3. Serialize and Send
+        memset(buffer, 0, sizeof(buffer));
+        size_t send_length = serialize(server_response, std::span<std::uint8_t>(buffer, BUFFER_SIZE));
+
+        ssize_t sent_length = sendto(socket_fd, buffer, send_length, 0,
                                      (struct sockaddr *) &client_address, address_length);
         if (sent_length < 0) {
             syserr("sendto");
-        }
-        else if (sent_length != received_length) {
+        } 
+        else if ((size_t)sent_length != send_length) { // Check against what we tried to SEND, not what we received
             fatal("incomplete sending");
         }
-    } while (received_length > 0);
 
-    printf("exchange finished\n");
+    } while (true);
 
     close(socket_fd);
     return 0;
