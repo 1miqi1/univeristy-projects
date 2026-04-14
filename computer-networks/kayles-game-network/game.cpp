@@ -111,7 +111,7 @@ void update_activity_time(Game& game, uint32_t player_id){
 
 // Adds player to the game.
 // First joining player becomes A.
-// Second joining player becomes B and starts the game with player A's turn.
+// Second joining player becomes B and starts the game with player B's turn.
 bool join_game(Game& game, std::uint32_t player_id) {
     if (game.game_state.player_a_id == 0) {
         game.game_state.player_a_id = player_id;
