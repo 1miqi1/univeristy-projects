@@ -1,4 +1,5 @@
 Oto treść pliku przepisana słowo w słowo do formatu Markdown, idealna do wykorzystania w pliku `README.md`:
+'DODAĆ' : Mozna utworzyc ostatnią grę
 
 ---
 
