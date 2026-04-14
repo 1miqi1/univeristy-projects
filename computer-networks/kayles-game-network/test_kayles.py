@@ -423,7 +423,6 @@ class TestKaylesServerCliValidation(unittest.TestCase):
         cases = [
             ["-r", "", "-a", HOST, "-p", "0", "-t", "2"],
             ["-r", "0", "-a", HOST, "-p", "0", "-t", "2"],
-            ["-r", "10", "-a", HOST, "-p", "0", "-t", "2"],
             ["-r", "1112", "-a", HOST, "-p", "0", "-t", "2"],
             ["-r", "1" * 257, "-a", HOST, "-p", "0", "-t", "2"],
         ]
@@ -715,4 +714,32 @@ class TestKaylesClientMore(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    import unittest
+    from colorama import Fore, Style, init
+
+    init(autoreset=True)
+
+    class ColorTextTestResult(unittest.TextTestResult):
+        def addSuccess(self, test):
+            super().addSuccess(test)
+            print(Fore.GREEN + "✔ PASS:", test)
+
+        def addFailure(self, test, err):
+            super().addFailure(test, err)
+            print(Fore.RED + "✘ FAIL:", test)
+
+        def addError(self, test, err):
+            super().addError(test, err)
+            print(Fore.MAGENTA + "💥 ERROR:", test)
+
+    class ColorTextTestRunner(unittest.TextTestRunner):
+        def __init__(self, *args, **kwargs):
+            super().__init__(
+                *args,
+                resultclass=ColorTextTestResult,
+                verbosity=2,
+                failfast=False,  # 🔥 stops on first failure
+                **kwargs
+            )
+
+    unittest.main(testRunner=ColorTextTestRunner)

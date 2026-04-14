@@ -273,6 +273,10 @@ bool deserialize_client_message(ClientMessage& msg,
             msg.player_id = ntohl(net_player_id);
             msg.game_id = ntohl(net_game_id);
             msg.pawn = buf[offset];
+            if (msg.player_id == 0) {
+                error_index = 1;
+                return false;
+            }
             break;
         }
 
@@ -295,6 +299,10 @@ bool deserialize_client_message(ClientMessage& msg,
             msg.player_id = ntohl(net_player_id);
             msg.game_id = ntohl(net_game_id);
             msg.pawn = 0;
+            if (msg.player_id == 0) {
+                error_index = 1;
+                return false;
+            }
             break;
         }
 
@@ -395,7 +403,7 @@ void print(const GameState& gs) {
               << "\n  status       : " << static_cast<unsigned>(gs.status) 
               << "\n  max pawn     : " << static_cast<unsigned>(gs.max_pawn) 
               << "\n  pawn row     : ";
-    for (std::size_t pawn = 0; pawn < gs.max_pawn; ++pawn) {
+    for (std::size_t pawn = 0; pawn <= gs.max_pawn; ++pawn) {
         uint8_t bit;
         bitset_get(gs.pawn_row, pawn, bit);
         std::cout << static_cast<unsigned>(bit);

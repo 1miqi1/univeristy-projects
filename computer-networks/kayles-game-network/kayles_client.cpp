@@ -47,13 +47,16 @@ ClientInput parse_client_input(char *argv[], int argc) {
     ClientInput args;
     std::set<char> flags;
 
-    for (int i = 1; i < argc; i+= 2) {
+    for (int i = 1; i + 1 < argc; i+= 2) {
         if (std::strlen(argv[i]) < 2 || argv[i][0] != '-') {
             fatal("wrong input: %s", argv[i]);
         }
 
         if (argv[i][1] == 'p' && !flags.count('p')) {
             args.port = read_port(argv[i + 1]);
+            if(args.port == 0){
+                fatal("wrong port number");
+            }
             flags.insert('p');
         }
     }
@@ -62,7 +65,7 @@ ClientInput parse_client_input(char *argv[], int argc) {
         fatal("missing required option: -p");
     }
 
-    for (int i = 1; i < argc; i+= 2) {
+    for (int i = 1; i + 1 < argc; i+= 2) {
         if(flags.count(argv[i][1])){
             continue;
         }

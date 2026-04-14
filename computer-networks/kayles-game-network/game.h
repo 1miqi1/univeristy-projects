@@ -10,9 +10,11 @@
 
 // Represents full game state including timing and remaining pawns.
 typedef struct {
-    std::time_t start;        // Timestamp when the game started
-    std::uint8_t pawns_left;  // Number of pawns still available
-    GameState game_state;     // Logical game state (players, board, status)
+    std::time_t player_a_activity = 0;        // Timestamp of last a activity
+    std::time_t player_b_activity = 0;        // Timestamp of last b activity
+    std::time_t after_finish_activity = 0;  // Timestamp of last activity including finish
+    std::uint8_t pawns_left;                // Number of pawns still available
+    GameState game_state;                   // Logical game state (players, board, status)
 } Game;
 
 /**
@@ -44,12 +46,40 @@ Game create_full_game(std::uint32_t game_id,
 /**
  * Checks if a given player participates in the game.
  *
- * @param games       All games
+ * @param game        Game
  * @param player_id   Player identifier
- * @param game_id     Game identifier
  * @return true if player is part of the game, false otherwise
  */
-bool check_my_game(const std::map<std::uint32_t, Game>& games, std::uint32_t player_id, std::uint32_t game_id);
+bool check_my_game(const Game& game, std::uint32_t player_id);
+
+
+/**
+ * Checks whether the game is still active based on player activity
+ * and server-defined timeout.
+ *
+ * Handles different game states:
+ * - WAITING_FOR_OPPONENT: if opponent does not join in time → game expires
+ * - TURN_A / TURN_B: if active player is inactive → opponent wins
+ * - WIN_A / WIN_B: after timeout → game can be cleaned up
+ *
+ * @param game             Game instance (modified if timeout occurs)
+ * @param server_timeout   Maximum allowed inactivity time (in seconds)
+ * @return true if game is still active, false if it should be terminated
+ */
+bool check_recent_activity(Game& game, time_t server_timeout);
+
+
+/**
+ * Updates the last activity timestamp for a player or finished game.
+ *
+ * - If the game is already finished (WIN_A / WIN_B), updates
+ *   post-game activity timestamp.
+ * - Otherwise updates activity timestamp for the corresponding player.
+ *
+ * @param game        Game instance (modified in-place)
+ * @param player_id   Player identifier
+ */
+void update_activity_time(Game& game, uint32_t player_id);
 
 /**
  * Checks if it is the given player's turn.

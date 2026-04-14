@@ -32,22 +32,17 @@ Game create_full_game(std::uint32_t game_id,
                       const std::vector<std::uint8_t>& pawn_row,
                       std::uint8_t pawns_left) {
     Game game{};
-    game.start = std::time(nullptr);
+    game.player_a_activity = std::time(nullptr);
+    game.player_b_activity = std::time(nullptr);
     game.pawns_left = pawns_left;
     game.game_state = create_game_state(game_id, max_pawn, pawn_row);
     return game;
 }
 
 // Checks whether given player belongs to this game as player A or B.
-bool check_my_game(const std::map<std::uint32_t, Game>& games, std::uint32_t player_id, std::uint32_t game_id){
-    auto it = games.find(game_id);
-
-    if (it == games.end()) {
-        return false; 
-    }
-
-    return it->second.game_state.player_a_id == player_id ||
-           it->second.game_state.player_b_id == player_id;
+bool check_my_game(const Game& game, std::uint32_t player_id){
+    return game.game_state.player_a_id == player_id ||
+           game.game_state.player_b_id == player_id;
 }
 
 // Checks whether it is currently the given player's turn.
@@ -63,6 +58,57 @@ bool check_my_turn(const Game& game, std::uint32_t player_id) {
     }
 }
 
+// Checks whether the game is still active based on player activity and 
+// server-defined timeout.
+bool check_recent_activity(Game& game, time_t server_timeout) {
+    time_t now = time(nullptr);
+    
+    if (game.game_state.status == WAITING_FOR_OPPONENT) {
+        // Must check if Player A is keeping the lobby alive
+        if (now - game.player_a_activity > server_timeout) {
+            return false; // Delete game
+        }
+    } 
+    else if (game.game_state.status == TURN_A || game.game_state.status == TURN_B) {
+        // Both players must stay active regardless of whose turn it is
+        bool a_timed_out = (now - game.player_a_activity > server_timeout);
+        bool b_timed_out = (now - game.player_b_activity > server_timeout);
+
+        if (a_timed_out && b_timed_out) {
+            return false; // Both dropped, safe to delete game entirely
+        } else if (a_timed_out) {
+            game.game_state.status = WIN_B;
+            game.after_finish_activity = now;
+        } else if (b_timed_out) {
+            game.game_state.status = WIN_A;
+            game.after_finish_activity = now;
+        }
+    } 
+    else if (game.game_state.status == WIN_A || game.game_state.status == WIN_B) {
+        // Keep finished game alive for server_timeout from the last valid message
+        if (now - game.after_finish_activity > server_timeout) {
+            return false; // Delete game
+        }
+    }
+    
+    return true;
+}
+
+// Updates the last activity timestamp for a player or finished game
+void update_activity_time(Game& game, uint32_t player_id){
+    time_t now = time(nullptr);
+    if(game.game_state.status == WIN_A || game.game_state.status == WIN_B){
+        game.after_finish_activity = now;
+    }
+    if(game.game_state.player_a_id == player_id){
+        game.player_a_activity = now;
+    }
+    if(game.game_state.player_b_id == player_id){
+        game.player_b_activity = now;
+    }
+}
+
+
 // Adds player to the game.
 // First joining player becomes A.
 // Second joining player becomes B and starts the game with player A's turn.
@@ -72,7 +118,7 @@ bool join_game(Game& game, std::uint32_t player_id) {
         return false;
     } else {
         game.game_state.player_b_id = player_id;
-        game.game_state.status = TURN_A;
+        game.game_state.status = TURN_B;
         return true;
     }
 }

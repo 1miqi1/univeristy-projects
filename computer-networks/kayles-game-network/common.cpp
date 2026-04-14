@@ -116,19 +116,17 @@ std::size_t read_size(const char* string) {
 sockaddr_in get_server_address(const char* host, std::uint16_t port) {
     addrinfo hints{};
     hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = IPPROTO_UDP;
 
     addrinfo* address_result = nullptr;
     const int errcode = getaddrinfo(host, nullptr, &hints, &address_result);
-    if (errcode != 0) {
+    if (errcode != 0 || address_result == nullptr) {
         fatal("getaddrinfo: %s", gai_strerror(errcode));
     }
 
-    sockaddr_in send_address{};
-    send_address.sin_family = AF_INET;
-    send_address.sin_addr.s_addr =
-        reinterpret_cast<sockaddr_in*>(address_result->ai_addr)->sin_addr.s_addr;
+    sockaddr_in send_address =
+        *reinterpret_cast<sockaddr_in*>(address_result->ai_addr);
     send_address.sin_port = htons(port);
 
     freeaddrinfo(address_result);
