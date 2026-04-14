@@ -1,0 +1,27 @@
+# Ignore everything
+*
+
+# Allow directories (so rules can apply inside them)
+!*/
+
+# Allow source files by extension
+!*.c
+!*.cpp
+!*.h
+!*.hpp
+!*.java
+!*.py
+!*.js
+!*.ts
+!*.html
+!*.css
+!*.md
+!*.asm
+!*.sh
+
+# Allow project structure
+!src/**
+
+# Allow common project docs
+!README.md
+!LICENSE

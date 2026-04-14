@@ -1,0 +1,23 @@
+---
+
+# 📚 University Projects
+
+This repository contains my coursework and assignments for various university subjects. Each subfolder corresponds to a specific subject, containing projects, exercises, and notes.
+
+### 📝 Description of Folders
+
+* **Object-Oriented-Programming (PO)**
+  Projects and examples focusing on OOP principles such as classes, inheritance, polymorphism, and encapsulation.
+
+* **Computer-Architecture and Operating-Systems (AKSO)**
+  Assignments related to the structure and organization of computer systems, instruction sets, process management, memory allocation, file systems, and concurrency.
+
+## 🛠️ Technologies
+
+Languages and tools vary by course, including but not limited to:
+
+* C / C++
+* Java
+* Python
+* Assembly
+
