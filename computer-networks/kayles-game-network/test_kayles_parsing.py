@@ -1,145 +1,480 @@
 import subprocess
 import unittest
-import time
-import os
-import signal
+from dataclasses import dataclass
+from typing import Optional
 
-SERVER_BIN = './kayles_server'
-CLIENT_BIN = './kayles_client'
+from colorama import Fore, init
 
-class KaylesComprehensiveTest(unittest.TestCase):
+init(autoreset=True)
 
-    def assert_negative(self, cmd):
-        """Sprawdza, czy program kończy się kodem 1 i wypisuje błąd na stderr."""
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 1, f"Miał być błąd (1), a jest {result.returncode} dla: {' '.join(cmd)}")
-        self.assertTrue(len(result.stderr.strip()) > 0, "Brak komunikatu o błędzie na stderr")
+CLIENT_BIN = "./kayles_client"
+SERVER_BIN = "./kayles_server"
 
-    def assert_positive_server(self, cmd):
-        """Sprawdza, czy serwer poprawnie parsuje argumenty i zaczyna nasłuchiwać."""
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, preexec_fn=os.setsid)
-        try:
-            time.sleep(0.2)
-            ret = proc.poll()
-            if ret is not None:
-                err = proc.stderr.read()
-                self.assertEqual(ret, 0, f"Serwer zamknął się przedwcześnie z błędem: {err}")
-            else:
-                # Jeśli działa, to znaczy, że argumenty były OK
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        finally:
-            proc.stdout.close()
-            proc.stderr.close()
-            proc.wait()
 
-    def assert_positive_client(self, cmd):
-        """Sprawdza, czy klient poprawnie wysyła wiadomość (kod 0)."""
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        self.assertEqual(result.returncode, 0, f"Klient winien zwrócić 0, a zwrócił {result.returncode}")
+@dataclass
+class Case:
+    name: str
+    program: str
+    args: list[str]
+    expected_code: Optional[int] = None
+    stderr_contains: Optional[str] = None
+    stdout_contains: Optional[str] = None
+    expected_behavior: str = "exit"   # "exit", "timeout", "either"
 
-    # === TESTY SERWERA: ARGUMENTY ===
 
-    def test_server_valid_params(self):
-        """Testy poprawnych kombinacji parametrów serwera."""
-        cases = [
-            ['-r', '1', '-a', '127.0.0.1', '-p', '10001', '-t', '1'],
-            ['-r', '101', '-a', '0.0.0.0', '-p', '0', '-t', '99'],
-            ['-r', '1' * 256, '-a', 'localhost', '-p', '10002', '-t', '5'], # Max długość rzędu
-        ]
-        for args in cases:
-            self.assert_positive_server([SERVER_BIN] + args)
+def run_case(case: Case) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            [case.program] + case.args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=1.5
+        )
 
-    def test_server_invalid_pawn_row(self):
-        """Testy walidacji rzędu pionów (-r)."""
-        base = ['-a', '127.0.0.1', '-p', '10003', '-t', '10']
-        invalid_rows = ['', '011', '110', '1021', '1A1', '1' * 257]
-        for row in invalid_rows:
-            self.assert_negative([SERVER_BIN, '-r', row] + base)
-
-    def test_server_invalid_address(self):
-        """Testy walidacji adresu (-a)."""
-        base = ['-r', '101', '-p', '10004', '-t', '10']
-        invalid_addrs = ['999.999.999.999', '127.0.1', 'not-a-domain.invalid-tld']
-        for addr in invalid_addrs:
-            self.assert_negative([SERVER_BIN, '-a', addr] + base)
-
-    def test_server_invalid_port_and_timeout(self):
-        """Testy walidacji portu (-p) i czasu (-t)."""
-        self.assert_negative([SERVER_BIN, '-r', '101', '-a', '127.0.0.1', '-p', '65536', '-t', '10'])
-        self.assert_negative([SERVER_BIN, '-r', '101', '-a', '127.0.0.1', '-p', '-1', '-t', '10'])
-        self.assert_negative([SERVER_BIN, '-r', '101', '-a', '127.0.0.1', '-p', '8080', '-t', '0'])
-        self.assert_negative([SERVER_BIN, '-r', '101', '-a', '127.0.0.1', '-p', '8080', '-t', '100'])
-
-    # === TESTY KLIENTA: ARGUMENTY I WIADOMOŚCI ===
-
-    def test_client_valid_messages(self):
-        """Testy poprawnych formatów wiadomości klienta."""
-        # Nawet bez serwera, klient powinien zwrócić 0 po timeoutcie
-        cases = [
-            '0/123',            # JOIN
-            '1/123/456/0',      # MOVE_1
-            '2/123/456/0',      # MOVE_2
-            '3/123/456',        # KEEP_ALIVE
-            '4/123/456',        # GIVE_UP
-        ]
-        for msg in cases:
-            self.assert_positive_client([CLIENT_BIN, '-a', '127.0.0.1', '-p', '10005', '-t', '1', '-m', msg])
-
-    def test_client_domain_resolution(self):
-        """Testy klienta z istniejącymi domenami."""
-        # google.com na porcie 80 to typowy test dostępności sieci
-        self.assert_positive_client([CLIENT_BIN, '-a', 'google.com', '-p', '80', '-t', '1', '-m', '0/1'])
-        self.assert_positive_client([CLIENT_BIN, '-a', 'localhost', '-p', '10006', '-t', '1', '-m', '0/1'])
-
-    def test_client_invalid_message_logic(self):
-        """Testy błędnych formatów pola -m."""
-        base = ['-a', '127.0.0.1', '-p', '10007', '-t', '1']
-        invalid_msgs = [
-            '0',                # Za mało pól dla JOIN
-            '0/123/456',        # Za dużo pól dla JOIN
-            '1/123/456',        # Za mało pól dla MOVE_1
-            '2/123/456/0/9',    # Za dużo pól dla MOVE_2
-            '5/123/456',        # Nieznany typ 5
-            '0/abc',            # Litery zamiast ID
-            '1/123/4294967296/0'# GameID > 32 bit
-        ]
-        for msg in invalid_msgs:
-            self.assert_negative([CLIENT_BIN, '-m', msg] + base)
-
-    def test_missing_parameters(self):
-        """Sprawdza, czy brak któregokolwiek z obowiązkowych parametrów rzuca błąd."""
-        # Serwer
-        self.assert_negative([SERVER_BIN, '-a', '127.0.0.1', '-p', '8080', '-t', '10']) # Brak -r
-        self.assert_negative([SERVER_BIN, '-r', '101', '-p', '8080', '-t', '10'])      # Brak -a
-        # Klient
-        self.assert_negative([CLIENT_BIN, '-p', '8080', '-t', '1', '-m', '0/1'])       # Brak -a
-        self.assert_negative([CLIENT_BIN, '-a', '127.0.0.1', '-t', '1', '-m', '0/1'])  # Brak -p
-
-if __name__ == '__main__':
-    import unittest
-    from colorama import Fore, Style, init
-    init(autoreset=True)
-    class ColorTextTestResult(unittest.TextTestResult):
-        def addSuccess(self, test):
-            super().addSuccess(test)
-            print(Fore.GREEN + "✔ PASS:", test)
-
-        def addFailure(self, test, err):
-            super().addFailure(test, err)
-            print(Fore.RED + "✘ FAIL:", test)
-
-        def addError(self, test, err):
-            super().addError(test, err)
-            print(Fore.MAGENTA + "💥 ERROR:", test)
-
-    class ColorTextTestRunner(unittest.TextTestRunner):
-        def __init__(self, *args, **kwargs):
-            super().__init__(
-                *args,
-                resultclass=ColorTextTestResult,
-                verbosity=2,
-                failfast=False,  # 🔥 stops on first failure
-                **kwargs
+        if case.expected_behavior == "timeout":
+            return (
+                False,
+                f"expected process to keep running, but it exited with code {result.returncode}\n"
+                f"stdout: {result.stdout!r}\n"
+                f"stderr: {result.stderr!r}"
             )
 
+        if case.expected_code is not None and result.returncode != case.expected_code:
+            return (
+                False,
+                f"wrong exit code\n"
+                f"expected: {case.expected_code}\n"
+                f"got     : {result.returncode}\n"
+                f"stdout  : {result.stdout!r}\n"
+                f"stderr  : {result.stderr!r}"
+            )
+
+        if case.stderr_contains is not None and case.stderr_contains not in result.stderr:
+            return (
+                False,
+                f"stderr does not contain expected text\n"
+                f"expected fragment: {case.stderr_contains!r}\n"
+                f"stderr           : {result.stderr!r}"
+            )
+
+        if case.stdout_contains is not None and case.stdout_contains not in result.stdout:
+            return (
+                False,
+                f"stdout does not contain expected text\n"
+                f"expected fragment: {case.stdout_contains!r}\n"
+                f"stdout           : {result.stdout!r}"
+            )
+
+        return True, "ok"
+
+    except subprocess.TimeoutExpired as e:
+        if case.expected_behavior in ("timeout", "either"):
+            return True, "ok"
+
+        return (
+            False,
+            f"process timed out unexpectedly\n"
+            f"partial stdout: {e.stdout!r}\n"
+            f"partial stderr: {e.stderr!r}"
+        )
+
+
+def client_cases() -> list[Case]:
+    return [
+        Case(
+            name="client: missing all args",
+            program=CLIENT_BIN,
+            args=[],
+            expected_code=1,
+            stderr_contains="usage:"
+        ),
+        Case(
+            name="client: missing timeout option",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/1"],
+            expected_code=1,
+            stderr_contains="usage:"
+        ),
+        Case(
+            name="client: unknown option",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-x", "5"],
+            expected_code=1,
+            stderr_contains="unknown option"
+        ),
+        Case(
+            name="client: wrong option format",
+            program=CLIENT_BIN,
+            args=["--p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="client: option too long (-pp)",
+            program=CLIENT_BIN,
+            args=["-pp", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="client: option too long (-abc)",
+            program=CLIENT_BIN,
+            args=["-abc", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="client: single dash (-)",
+            program=CLIENT_BIN,
+            args=["-", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="client: missing dash (p)",
+            program=CLIENT_BIN,
+            args=["p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="client: triple dash (---)",
+            program=CLIENT_BIN,
+            args=["---", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="client: port zero invalid",
+            program=CLIENT_BIN,
+            args=["-p", "0", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="client port must be in range 1-65535"
+        ),
+        Case(
+            name="client: invalid port text",
+            program=CLIENT_BIN,
+            args=["-p", "abc", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="not a valid port number"
+        ),
+        Case(
+            name="client: invalid timeout format",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "abc"],
+            expected_code=1,
+            stderr_contains="wrong format of client timeout"
+        ),
+        Case(
+            name="client: timeout zero invalid",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "0"],
+            expected_code=1,
+            stderr_contains="client timeout out of range"
+        ),
+        Case(
+            name="client: timeout too large",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "100"],
+            expected_code=1,
+            stderr_contains="client timeout out of range"
+        ),
+        Case(
+            name="client: empty message",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong client message"
+        ),
+        Case(
+            name="client: message non-numeric field",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/a", "-t", "5"],
+            expected_code=1,
+            stderr_contains="Fields must be non-negative integers"
+        ),
+        Case(
+            name="client: unknown message type",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "9/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="Unknown message type"
+        ),
+        Case(
+            name="client: player id zero",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/0", "-t", "5"],
+            expected_code=1,
+            stderr_contains="Player index can't be 0"
+        ),
+        Case(
+            name="client: join wrong field count",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/1/2", "-t", "5"],
+            expected_code=1,
+            stderr_contains="JOIN requires exactly"
+        ),
+        Case(
+            name="client: move missing fields",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "1/1/2", "-t", "5"],
+            expected_code=1,
+            stderr_contains="MOVE requires"
+        ),
+        Case(
+            name="client: move pawn too large",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "1/1/2/999", "-t", "5"],
+            expected_code=1,
+            stderr_contains="Pawn index out of range"
+        ),
+        Case(
+            name="client: utility message wrong field count",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "3/1", "-t", "5"],
+            expected_code=1,
+            stderr_contains="Utility msg requires"
+        ),
+        Case(
+            name="client: last port wins",
+            program=CLIENT_BIN,
+            args=["-p", "0", "-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "1"],
+            expected_behavior="either",
+            expected_code=0
+        ),
+        Case(
+            name="client: last timeout wins",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "200", "-t", "1"],
+            expected_behavior="either",
+            expected_code=0
+        ),
+        Case(
+            name="client: last message wins",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "9/1", "-m", "0/1", "-t", "1"],
+            expected_behavior="either",
+            expected_code=0
+        ),
+        Case(
+            name="client: last address wins",
+            program=CLIENT_BIN,
+            args=["-p", "1234", "-a", "bad.invalid", "-a", "127.0.0.1", "-m", "0/1", "-t", "1"],
+            expected_behavior="either",
+            expected_code=0
+        ),
+    ]
+
+
+def server_cases() -> list[Case]:
+    too_long_row = "1" * 257
+
+    return [
+        Case(
+            name="server: missing all args",
+            program=SERVER_BIN,
+            args=[],
+            expected_code=1,
+            stderr_contains="usage:"
+        ),
+        Case(
+            name="server: missing timeout option",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "1234"],
+            expected_code=1,
+            stderr_contains="usage:"
+        ),
+        Case(
+            name="server: unknown option",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "1234", "-x", "5"],
+            expected_code=1,
+            stderr_contains="unknown option"
+        ),
+        Case(
+            name="server: wrong option format",
+            program=SERVER_BIN,
+            args=["--r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="server: option too long (-pp)",
+            program=SERVER_BIN,
+            args=["-pp", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="server: option too long (-abc)",
+            program=SERVER_BIN,
+            args=["-abc", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="server: single dash (-)",
+            program=SERVER_BIN,
+            args=["-", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="server: missing dash (r)",
+            program=SERVER_BIN,
+            args=["r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="server: triple dash (---)",
+            program=SERVER_BIN,
+            args=["---", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong option format"
+        ),
+        Case(
+            name="server: invalid port text",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "abc", "-t", "5"],
+            expected_code=1,
+            stderr_contains="not a valid port number"
+        ),
+        Case(
+            name="server: port 0 allowed",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "0", "-t", "1"],
+            expected_behavior="timeout"
+        ),
+        Case(
+            name="server: invalid timeout format",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "abc"],
+            expected_code=1,
+            stderr_contains="wrong format of server timeout"
+        ),
+        Case(
+            name="server: timeout zero invalid",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "0"],
+            expected_code=1,
+            stderr_contains="server timeout out of range"
+        ),
+        Case(
+            name="server: timeout too large",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "100"],
+            expected_code=1,
+            stderr_contains="server timeout out of range"
+        ),
+        Case(
+            name="server: empty pawn row",
+            program=SERVER_BIN,
+            args=["-r", "", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="pawn row length out of range"
+        ),
+        Case(
+            name="server: pawn row too long",
+            program=SERVER_BIN,
+            args=["-r", too_long_row, "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="pawn row length out of range"
+        ),
+        Case(
+            name="server: pawn row invalid char",
+            program=SERVER_BIN,
+            args=["-r", "10a1", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="wrong format of pawn row"
+        ),
+        Case(
+            name="server: pawn row first not one",
+            program=SERVER_BIN,
+            args=["-r", "001", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="first and last pawn must be 1"
+        ),
+        Case(
+            name="server: pawn row last not one",
+            program=SERVER_BIN,
+            args=["-r", "100", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_code=1,
+            stderr_contains="first and last pawn must be 1"
+        ),
+        Case(
+            name="server: minimal valid pawn row",
+            program=SERVER_BIN,
+            args=["-r", "1", "-a", "127.0.0.1", "-p", "1234", "-t", "1"],
+            expected_behavior="timeout"
+        ),
+        Case(
+            name="server: normal valid row",
+            program=SERVER_BIN,
+            args=["-r", "11101111011111", "-a", "127.0.0.1", "-p", "1234", "-t", "1"],
+            expected_behavior="timeout"
+        ),
+        Case(
+            name="server: last row wins",
+            program=SERVER_BIN,
+            args=["-r", "001", "-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "1"],
+            expected_behavior="timeout"
+        ),
+        Case(
+            name="server: last timeout wins",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "200", "-t", "1"],
+            expected_behavior="timeout"
+        ),
+        Case(
+            name="server: last address wins",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "bad.invalid", "-a", "127.0.0.1", "-p", "1234", "-t", "1"],
+            expected_behavior="timeout"
+        ),
+        Case(
+            name="server: last port wins",
+            program=SERVER_BIN,
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "0", "-p", "1234", "-t", "1"],
+            expected_behavior="timeout"
+        ),
+    ]
+
+
+class ParsingTests(unittest.TestCase):
+    maxDiff = None
+
+    def test_all_cases(self):
+        for case in client_cases() + server_cases():
+            with self.subTest(case=case.name):
+                ok, message = run_case(case)
+                self.assertTrue(ok, msg=f"{case.name}\n{message}")
+
+
+class ColorTextTestResult(unittest.TextTestResult):
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        print(Fore.GREEN + "✔ PASS:", test)
+
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        print(Fore.RED + "✘ FAIL:", test)
+
+    def addError(self, test, err):
+        super().addError(test, err)
+        print(Fore.MAGENTA + "💥 ERROR:", test)
+
+
+class ColorTextTestRunner(unittest.TextTestRunner):
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            *args,
+            resultclass=ColorTextTestResult,
+            verbosity=2,
+            **kwargs
+        )
+
+
+if __name__ == "__main__":
     unittest.main(testRunner=ColorTextTestRunner)
