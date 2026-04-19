@@ -38,6 +38,7 @@ Game create_full_game(std::uint32_t game_id,
     Game game{};
     game.player_a_activity = Clock::now();
     game.player_b_activity = Clock::now();
+    game.next_check_time = Clock::now();
     game.pawns_left = pawns_left;
     game.game_state = create_game_state(game_id, max_pawn, pawn_row);
     return game;
@@ -59,66 +60,6 @@ bool check_my_turn(const Game& game, std::uint32_t player_id) {
             return game.game_state.player_b_id == player_id;
         default:
             return false;
-    }
-}
-
-// Checks whether the game is still active based on player activity and 
-// server-defined timeout.
-bool check_recent_activity(Game& game, std::time_t server_timeout) {
-    auto now = Clock::now();
-    auto timeout = std::chrono::seconds(server_timeout);
-
-    if (game.game_state.status == WAITING_FOR_OPPONENT) {
-        if (now - game.player_a_activity >= timeout) {
-            return false;
-        }
-    }
-    else if (game.game_state.status == TURN_A || game.game_state.status == TURN_B) {
-        bool a_timed_out = (now - game.player_a_activity >= timeout);
-        bool b_timed_out = (now - game.player_b_activity >= timeout);
-
-        if (a_timed_out && b_timed_out) {
-            if (game.player_a_activity > game.player_b_activity) {
-                game.game_state.status = WIN_A;
-                game.after_finish_activity = game.player_b_activity + timeout;
-            } else {
-                game.game_state.status = WIN_B;
-                game.after_finish_activity = game.player_a_activity + timeout;
-            }
-        }
-        else if (a_timed_out) {
-            game.game_state.status = WIN_B;
-            game.after_finish_activity = game.player_a_activity + timeout;
-        }
-        else if (b_timed_out) {
-            game.game_state.status = WIN_A;
-            game.after_finish_activity = game.player_b_activity + timeout;
-        }
-    }
-
-    if (game.game_state.status == WIN_A || game.game_state.status == WIN_B) {
-        if (now - game.after_finish_activity >= timeout) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-// Updates the last activity timestamp for a player or finished game
-void update_activity_time(Game& game, uint32_t player_id) {
-    auto now = Clock::now();
-
-    if (game.game_state.status == WIN_A || game.game_state.status == WIN_B) {
-        game.after_finish_activity = now;
-    }
-
-    if (game.game_state.player_a_id == player_id) {
-        game.player_a_activity = now;
-    }
-
-    if (game.game_state.player_b_id == player_id) {
-        game.player_b_activity = now;
     }
 }
 
@@ -233,3 +174,99 @@ void give_up(Game& game) {
         game.game_state.status = WIN_A;
     }
 }
+
+
+// Computes time when server should check the state of the game
+TimePoint compute_next_check_time(const Game& game, std::time_t server_timeout) {
+    auto timeout = std::chrono::seconds(server_timeout);
+
+    if (game.game_state.status == WAITING_FOR_OPPONENT) {
+        return game.player_a_activity + timeout;
+    }
+
+    if (game.game_state.status == TURN_A || game.game_state.status == TURN_B) {
+        return std::min(game.player_a_activity + timeout,
+                        game.player_b_activity + timeout);
+    }
+
+    if (game.game_state.status == WIN_A || game.game_state.status == WIN_B) {
+        return game.after_finish_activity + timeout;
+    }
+
+    return Clock::now() + timeout;
+}
+
+// Schedules or reschedules a game in the timeout set.
+void schedule_game(std::map<std::uint32_t, Game>& games,
+                   std::set<ScheduledCheck>& timeouts,
+                   std::uint32_t game_id,
+                   std::time_t server_timeout) {
+    auto it = games.find(game_id);
+    if (it == games.end()) {
+        return;
+    }
+
+    timeouts.erase({it->second.next_check_time, game_id});
+    it->second.next_check_time = compute_next_check_time(it->second, server_timeout);
+    timeouts.insert({it->second.next_check_time, game_id});
+}
+
+//Verifies whether a game is still active and updates its state on timeout.
+bool check_recent_activity(Game& game, std::time_t server_timeout) {
+    auto now = Clock::now();
+    auto timeout = std::chrono::seconds(server_timeout);
+
+    if (game.game_state.status == WAITING_FOR_OPPONENT) {
+        if (now - game.player_a_activity >= timeout) {
+            return false;
+        }
+    }
+    else if (game.game_state.status == TURN_A || game.game_state.status == TURN_B) {
+        bool a_timed_out = (now - game.player_a_activity >= timeout);
+        bool b_timed_out = (now - game.player_b_activity >= timeout);
+
+        if (a_timed_out && b_timed_out) {
+            if (game.player_a_activity > game.player_b_activity) {
+                game.game_state.status = WIN_A;
+                game.after_finish_activity = game.player_b_activity + timeout;
+            } else {
+                game.game_state.status = WIN_B;
+                game.after_finish_activity = game.player_a_activity + timeout;
+            }
+        }
+        else if (a_timed_out) {
+            game.game_state.status = WIN_B;
+            game.after_finish_activity = game.player_a_activity + timeout;
+        }
+        else if (b_timed_out) {
+            game.game_state.status = WIN_A;
+            game.after_finish_activity = game.player_b_activity + timeout;
+        }
+    }
+
+    if (game.game_state.status == WIN_A || game.game_state.status == WIN_B) {
+        if (now - game.after_finish_activity >= timeout) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Updates last time of activity
+void update_activity_time(Game& game, uint32_t player_id) {
+    auto now = Clock::now();
+
+    if (game.game_state.status == WIN_A || game.game_state.status == WIN_B) {
+        game.after_finish_activity = now;
+    }
+
+    if (game.game_state.player_a_id == player_id) {
+        game.player_a_activity = now;
+    }
+
+    if (game.game_state.player_b_id == player_id) {
+        game.player_b_activity = now;
+    }
+}
+

@@ -6,9 +6,11 @@
 #include <vector>
 #include <map>
 #include <chrono>
+#include <set>
 
 using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
+using ScheduledCheck = std::pair<TimePoint, std::uint32_t>;
 
 
 // ----------------------------
@@ -49,6 +51,7 @@ typedef struct {
     TimePoint player_a_activity;             // Timestamp of last a activity
     TimePoint player_b_activity;             // Timestamp of last b activity
     TimePoint after_finish_activity;         // Timestamp of last activity including finish
+    TimePoint next_check_time;                 // Timestamp when should it be next checked
     std::uint8_t pawns_left;                 // Number of pawns still available
     GameState game_state;                    // Logical game state (players, board, status)
 } Game;
@@ -79,34 +82,6 @@ Game create_full_game(std::uint32_t game_id,
                       const std::vector<std::uint8_t>& pawn_row,
                       std::uint8_t pawns_left);
 
-
-/**
- * Checks whether the game is still active based on player activity
- * and server-defined timeout.
- *
- * Handles different game states:
- * - WAITING_FOR_OPPONENT: if opponent does not join in time → game expires
- * - TURN_A / TURN_B: if active player is inactive → opponent wins
- * - WIN_A / WIN_B: after timeout → game can be cleaned up
- *
- * @param game             Game instance (modified if timeout occurs)
- * @param server_timeout   Maximum allowed inactivity time (in seconds)
- * @return true if game is still active, false if it should be terminated
- */
-bool check_recent_activity(Game& game, time_t server_timeout);
-
-
-/**
- * Updates the last activity timestamp for a player or finished game.
- *
- * - If the game is already finished (WIN_A / WIN_B), updates
- *   post-game activity timestamp.
- * - Otherwise updates activity timestamp for the corresponding player.
- *
- * @param game        Game instance (modified in-place)
- * @param player_id   Player identifier
- */
-void update_activity_time(Game& game, uint32_t player_id);
 
 /**
  * Checks if it is the given player's turn.
@@ -152,5 +127,65 @@ bool make_move_2(Game &game, std::uint8_t pawn);
  * @param game        Game instance
  */
 void give_up(Game &game);
+
+/**
+ * Schedules or reschedules a game in the timeout set.
+ *
+ * If the game already has a previously scheduled timeout check,
+ * that entry is removed before inserting the new one. This guarantees
+ * that the timeout set contains at most one active entry per game.
+ *
+ * @param games           Map of active games
+ * @param timeouts        Ordered set of scheduled timeout checks
+ * @param game_id         Identifier of the game to schedule
+ * @param server_timeout  Timeout for inactivity
+ */
+void schedule_game(std::map<std::uint32_t, Game>& games,
+                   std::set<ScheduledCheck>& timeouts,
+                   std::uint32_t game_id,
+                   std::time_t server_timeout);
+
+/**
+ * Verifies whether a game is still active and updates its state on timeout.
+ *
+ * The function applies timeout rules depending on the current state:
+ *  - WAITING_FOR_OPPONENT: the game is removed if player A timed out
+ *  - TURN_A / TURN_B: if one or both players timed out, the game is
+ *    transitioned to the appropriate WIN_* state
+ *  - WIN_A / WIN_B: the finished game is kept only for a limited
+ *    retention period, after which it is removed
+ *
+ * If a timeout occurs during an active game, the winner is determined
+ * according to the last player who remained active.
+ *
+ * @param game            Game to verify and possibly update
+ * @param server_timeout  Timeout for inactivity
+ * @return true if the game should remain on the server, false if it should be removed
+ */
+bool check_recent_activity(Game& game, std::time_t server_timeout);
+
+/**
+ * Updates the last activity timestamp for a player or finished game.
+ *
+ * - If the game is already finished (WIN_A / WIN_B), updates
+ *   post-game activity timestamp.
+ * - Otherwise updates activity timestamp for the corresponding player.
+ *
+ * @param game        Game instance (modified in-place)
+ * @param player_id   Player identifier
+ */
+void update_activity_time(Game& game, uint32_t player_id);
+
+/**
+ * Computes the next timeout check moment for a game.
+ *
+ * The returned time is the earliest point when the game may need
+ * a state update or removal due to inactivity, depending on its state.
+ *
+ * @param game            Game to evaluate
+ * @param server_timeout  Timeout duration
+ * @return Next scheduled check time
+ */
+TimePoint compute_next_check_time(const Game& game, std::time_t server_timeout);
 
 #endif
