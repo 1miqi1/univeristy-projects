@@ -199,13 +199,13 @@ std::size_t serialize(const GameState& game_state, std::span<std::uint8_t> buf) 
 }
 
 std::size_t serialize(const WrongMessage& wrong_message, std::span<std::uint8_t> buf) {
-    const std::size_t total_size = CLIENT_MESSAGE_PREFIX_SIZE + 2;
+    const std::size_t total_size = MSG_WRONG_MESSAGE_LENGTH;
     if (buf.size() < total_size) {
         return 0;
     }
 
     std::size_t offset = 0;
-    std::memcpy(buf.data() + offset, wrong_message.client_message_prefix, CLIENT_MESSAGE_PREFIX_SIZE);
+    std::memcpy(buf.data(), wrong_message.client_message_prefix, CLIENT_MESSAGE_PREFIX_SIZE);
     offset += CLIENT_MESSAGE_PREFIX_SIZE;
 
     buf[offset++] = wrong_message.status;

@@ -21,7 +21,7 @@
 #include "protocol.h"
 #include "game.h"
 
-constexpr std::size_t BUFFER_SIZE = 1024;
+constexpr std::size_t BUFFER_SIZE = 100;
 constexpr int MAX_TIME = 99;
 constexpr std::size_t INPUT_LENGTH = 9;
 constexpr std::uint8_t BYTE = 8;
@@ -67,7 +67,7 @@ ServerInput parse_server_input(int argc, char *argv[]) {
         if (std::strlen(argv[i]) < 2 || argv[i][0] != '-') {
             fatal("wrong input: %s", argv[i]);
         }
-        if (argv[i][1] == 'p') {
+        if (flags.count('p') == 0  && argv[i][1] == 'p') {
             args.port = read_port(argv[i + 1]);
             flags.insert('p');
         }
@@ -141,6 +141,8 @@ ServerInput parse_server_input(int argc, char *argv[]) {
                 fatal("unknown option: %s", argv[i]);
         }
     }
+    
+    std::cout << args.server_timeout << "\n";
 
     if (!(flags.count('p') && flags.count('a') && flags.count('t') && flags.count('r'))) {
         fatal("not all options provided");
@@ -213,7 +215,8 @@ int main(int argc, char *argv[]) {
     ClientMessage client_message;
     ServerResponse server_response;
 
-    uint32_t waiting_game_id = 0;
+    bool games_avaliable = true;
+    std::uint32_t waiting_game_id = 0;
     std::uint32_t current_id = 0;
 
     // ----------------------------
@@ -265,18 +268,24 @@ int main(int argc, char *argv[]) {
         // Message validation
         // ----------------------------
         if (!deserialize_client_message(client_message, buffer, received_length, error_index)) {
+            // ----------------------------
+            // Wrong client message
+            // ----------------------------
             create_wrong_message(wrong_message,
-                                 std::span<const std::uint8_t>(buffer, BUFFER_SIZE),
-                                 error_index);
+                                std::span<const std::uint8_t>(buffer, BUFFER_SIZE),
+                                error_index);
             server_response.response_type = MSG_WRONG_MESSAGE;
             server_response.response = wrong_message;
         }
         else if (client_message.msg_type != MSG_JOIN &&
-                 !check_game(games, client_message.game_id, client_message.player_id)) {
+                !check_game(games, client_message.game_id, client_message.player_id)) {
+            // ----------------------------
+            // No such game
+            // ----------------------------
             handle_invalid_game(error_index);
             create_wrong_message(wrong_message,
-                                 std::span<const std::uint8_t>(buffer, BUFFER_SIZE),
-                                 error_index);
+                                std::span<const std::uint8_t>(buffer, BUFFER_SIZE),
+                                error_index);
             server_response.response_type = MSG_WRONG_MESSAGE;
             server_response.response = wrong_message;
         }
@@ -292,20 +301,23 @@ int main(int argc, char *argv[]) {
 
                 if (it == games.end() || !(it->second.game_state.status == WAITING_FOR_OPPONENT)) {
                     try {
-                        if (current_id == MAX_GAME_ID) {
+                        if (!games_avaliable){
                             continue;
                         }
+                        if (current_id == MAX_GAME_ID) {
+                            games_avaliable = false;
+                        }
 
-                        games[current_id] = create_full_game(current_id, args.max_pawn,
-                                                             args.pawn_row, args.pawns_left);
+                        games.emplace(current_id, create_full_game(current_id, args.max_pawn,
+                                                            args.pawn_row, args.pawns_left));
                         waiting_game_id = current_id;
                         current_id++;
                     } catch (const std::bad_alloc&) {
+                        games_avaliable = true;
                         continue;
                     }
                 }
 
-                std::cout << "target game" << waiting_game_id << "\n";
                 target_game = waiting_game_id;
                 join_game(games[target_game], client_message.player_id);
                 server_response.response = games[target_game].game_state;
@@ -351,7 +363,7 @@ int main(int argc, char *argv[]) {
         // Send response to client
         // ----------------------------
         ssize_t sent_length = sendto(socket_fd, buffer, send_length, 0,
-                                     (struct sockaddr *) &client_address, address_length);
+                                    (struct sockaddr *) &client_address, address_length);
         if (sent_length < 0) {
             syserr("sendto");
         }

@@ -87,7 +87,6 @@ enum MsgTypeLengths : std::size_t {
     MSG_GIVE_UP_LENGTH = 9,
     MSG_WRONG_MESSAGE_LENGTH = 14,
     GAME_STATE_HEADER_SIZE = 14,
-    MAX_GAME_STATE_LENGHT = 48,
 };
 
 /**

@@ -5,14 +5,20 @@
 #include <ctime>
 #include <vector>
 #include <map>
+#include <chrono>
+
+using Clock = std::chrono::steady_clock;
+using TimePoint = Clock::time_point;
 
 #include "protocol.h"
 
-// Represents full game state including timing and remaining pawns.
+/** 
+ * Represents full game state including timing and remaining pawns.
+ */
 typedef struct {
-    std::time_t player_a_activity = 0;        // Timestamp of last a activity
-    std::time_t player_b_activity = 0;        // Timestamp of last b activity
-    std::time_t after_finish_activity = 0;  // Timestamp of last activity including finish
+    TimePoint player_a_activity;        // Timestamp of last a activity
+    TimePoint player_b_activity;        // Timestamp of last b activity
+    TimePoint after_finish_activity;  // Timestamp of last activity including finish
     std::uint8_t pawns_left;                // Number of pawns still available
     GameState game_state;                   // Logical game state (players, board, status)
 } Game;

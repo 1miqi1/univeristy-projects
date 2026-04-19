@@ -3,10 +3,14 @@
 #include <ctime>
 #include <vector>
 #include <map>
+#include <chrono>
 
 #include "common.h"
 #include "err.h"
 #include "game.h"
+
+using Clock = std::chrono::steady_clock;
+using TimePoint = Clock::time_point;
 
 constexpr std::size_t BYTE_SIZE = 8;
 
@@ -32,8 +36,8 @@ Game create_full_game(std::uint32_t game_id,
                       const std::vector<std::uint8_t>& pawn_row,
                       std::uint8_t pawns_left) {
     Game game{};
-    game.player_a_activity = std::time(nullptr);
-    game.player_b_activity = std::time(nullptr);
+    game.player_a_activity = Clock::now();
+    game.player_b_activity = Clock::now();
     game.pawns_left = pawns_left;
     game.game_state = create_game_state(game_id, max_pawn, pawn_row);
     return game;
@@ -60,50 +64,60 @@ bool check_my_turn(const Game& game, std::uint32_t player_id) {
 
 // Checks whether the game is still active based on player activity and 
 // server-defined timeout.
-bool check_recent_activity(Game& game, time_t server_timeout) {
-    time_t now = time(nullptr);
-    
-    if (game.game_state.status == WAITING_FOR_OPPONENT) {
-        // Must check if Player A is keeping the lobby alive
-        if (now - game.player_a_activity > server_timeout) {
-            return false; // Delete game
-        }
-    } 
-    else if (game.game_state.status == TURN_A || game.game_state.status == TURN_B) {
-        // Both players must stay active regardless of whose turn it is
-        bool a_timed_out = (now - game.player_a_activity > server_timeout);
-        bool b_timed_out = (now - game.player_b_activity > server_timeout);
+bool check_recent_activity(Game& game, std::time_t server_timeout) {
+    auto now = Clock::now();
+    auto timeout = std::chrono::seconds(server_timeout);
 
-        if (a_timed_out && b_timed_out) {
-            return false; // Both dropped, safe to delete game entirely
-        } else if (a_timed_out) {
-            game.game_state.status = WIN_B;
-            game.after_finish_activity = now;
-        } else if (b_timed_out) {
-            game.game_state.status = WIN_A;
-            game.after_finish_activity = now;
-        }
-    } 
-    else if (game.game_state.status == WIN_A || game.game_state.status == WIN_B) {
-        // Keep finished game alive for server_timeout from the last valid message
-        if (now - game.after_finish_activity > server_timeout) {
-            return false; // Delete game
+    if (game.game_state.status == WAITING_FOR_OPPONENT) {
+        if (now - game.player_a_activity >= timeout) {
+            return false;
         }
     }
-    
+    else if (game.game_state.status == TURN_A || game.game_state.status == TURN_B) {
+        bool a_timed_out = (now - game.player_a_activity >= timeout);
+        bool b_timed_out = (now - game.player_b_activity >= timeout);
+
+        if (a_timed_out && b_timed_out) {
+            if (game.player_a_activity > game.player_b_activity) {
+                game.game_state.status = WIN_A;
+                game.after_finish_activity = game.player_b_activity + timeout;
+            } else {
+                game.game_state.status = WIN_B;
+                game.after_finish_activity = game.player_a_activity + timeout;
+            }
+        }
+        else if (a_timed_out) {
+            game.game_state.status = WIN_B;
+            game.after_finish_activity = game.player_a_activity + timeout;
+        }
+        else if (b_timed_out) {
+            game.game_state.status = WIN_A;
+            game.after_finish_activity = game.player_b_activity + timeout;
+        }
+    }
+
+    if (game.game_state.status == WIN_A || game.game_state.status == WIN_B) {
+        if (now - game.after_finish_activity >= timeout) {
+            return false;
+        }
+    }
+
     return true;
 }
 
 // Updates the last activity timestamp for a player or finished game
-void update_activity_time(Game& game, uint32_t player_id){
-    time_t now = time(nullptr);
-    if(game.game_state.status == WIN_A || game.game_state.status == WIN_B){
+void update_activity_time(Game& game, uint32_t player_id) {
+    auto now = Clock::now();
+
+    if (game.game_state.status == WIN_A || game.game_state.status == WIN_B) {
         game.after_finish_activity = now;
     }
-    if(game.game_state.player_a_id == player_id){
+
+    if (game.game_state.player_a_id == player_id) {
         game.player_a_activity = now;
     }
-    if(game.game_state.player_b_id == player_id){
+
+    if (game.game_state.player_b_id == player_id) {
         game.player_b_activity = now;
     }
 }
@@ -153,6 +167,7 @@ bool make_move_1(Game& game, std::uint8_t pawn) {
         } else {
             game.game_state.status = WIN_B;
         }
+        game.after_finish_activity = Clock::now();
     } else {
         if (game.game_state.status == TURN_A) {
             game.game_state.status = TURN_B;
