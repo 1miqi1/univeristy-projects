@@ -6,6 +6,9 @@
 #include <string>
 #include <variant>
 #include <span>
+#include <map>
+
+#include "game.h"
 
 // ----------------------------
 // Constants
@@ -89,6 +92,7 @@ enum MsgTypeLengths : std::size_t {
     GAME_STATE_HEADER_SIZE = 14,
 };
 
+
 /**
  * Result codes for parsing textual input.
  */
@@ -98,16 +102,6 @@ enum ParseStatus : int {
     PARSE_ERR_RESOURCE = -2
 };
 
-/**
- * Represents current state of the game match.
- */
-enum GameStatus : std::uint8_t {
-    WAITING_FOR_OPPONENT = 0,
-    TURN_A = 1,
-    TURN_B = 2,
-    WIN_A = 3,
-    WIN_B = 4
-};
 
 // ----------------------------
 // Structures
@@ -131,17 +125,6 @@ struct ClientMessage {
     std::uint8_t pawn = 0;
 };
 
-/**
- * Full game state used for synchronization.
- */
-struct GameState {
-    std::uint32_t game_id = 0;
-    std::uint32_t player_a_id = 0;
-    std::uint32_t player_b_id = 0;
-    std::uint8_t status = 0;
-    std::uint8_t max_pawn = 0;
-    std::vector<std::uint8_t> pawn_row;
-};
 
 /**
  * Error details for WRONG_MESSAGE responses.
@@ -246,16 +229,18 @@ std::size_t serialize(const ServerResponse& server_response, std::span<std::uint
 /**
  * Deserializes a client message from the provided buffer.
  *
- * @param msg          Output parameter for deserialized message
- * @param buf          Input buffer
+ * @param msg               Output parameter for deserialized message
+ * @param buf               Input buffer
  * @param recieved_length
- * @param error_index  Output parameter for error position
- * @return true on success, false on failure
+ * @param error_index       Output parameter for error position
+ * @param games             Map of avaliable games
+ * @return true on success, false on failure. Sets error_index to first wrong bite.
  */
 bool deserialize_client_message(ClientMessage& msg,
                                 std::span<const std::uint8_t> buf,
                                 std::size_t recieved_length,
-                                std::uint8_t& error_index);
+                                std::uint8_t& error_index,
+                                std::map<std::uint32_t, Game>& games);
 
 /**
  * Deserializes a game state from the provided buffer.

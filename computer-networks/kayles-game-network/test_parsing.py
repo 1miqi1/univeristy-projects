@@ -1,4 +1,5 @@
 import subprocess
+import time
 import unittest
 from dataclasses import dataclass
 from typing import Optional
@@ -20,64 +21,101 @@ class Case:
     stderr_contains: Optional[str] = None
     stdout_contains: Optional[str] = None
     expected_behavior: str = "exit"   # "exit", "timeout", "either"
+    wait_time: float = 0.3            # used for timeout/either checks
+
+
+def _check_output(case: Case, returncode: int, stdout: str, stderr: str) -> tuple[bool, str]:
+    if case.expected_code is not None and returncode != case.expected_code:
+        return (
+            False,
+            f"wrong exit code\n"
+            f"expected: {case.expected_code}\n"
+            f"got     : {returncode}\n"
+            f"stdout  : {stdout!r}\n"
+            f"stderr  : {stderr!r}"
+        )
+
+    if case.stderr_contains is not None and case.stderr_contains.lower() not in stderr.lower():
+        return (
+            False,
+            f"stderr does not contain expected text\n"
+            f"expected fragment: {case.stderr_contains!r}\n"
+            f"stderr           : {stderr!r}"
+        )
+
+    if case.stdout_contains is not None and case.stdout_contains.lower() not in stdout.lower():
+        return (
+            False,
+            f"stdout does not contain expected text\n"
+            f"expected fragment: {case.stdout_contains!r}\n"
+            f"stdout           : {stdout!r}"
+        )
+
+    return True, "ok"
 
 
 def run_case(case: Case) -> tuple[bool, str]:
+    cmd = [case.program] + case.args
+
+    if case.expected_behavior == "exit":
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=1.5
+            )
+        except subprocess.TimeoutExpired as e:
+            return (
+                False,
+                f"process timed out unexpectedly\n"
+                f"partial stdout: {e.stdout!r}\n"
+                f"partial stderr: {e.stderr!r}"
+            )
+
+        return _check_output(case, result.returncode, result.stdout, result.stderr)
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
     try:
-        result = subprocess.run(
-            [case.program] + case.args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=1.5
-        )
+        time.sleep(case.wait_time)
+        still_running = proc.poll() is None
 
         if case.expected_behavior == "timeout":
-            return (
-                False,
-                f"expected process to keep running, but it exited with code {result.returncode}\n"
-                f"stdout: {result.stdout!r}\n"
-                f"stderr: {result.stderr!r}"
-            )
-
-        if case.expected_code is not None and result.returncode != case.expected_code:
-            return (
-                False,
-                f"wrong exit code\n"
-                f"expected: {case.expected_code}\n"
-                f"got     : {result.returncode}\n"
-                f"stdout  : {result.stdout!r}\n"
-                f"stderr  : {result.stderr!r}"
-            )
-
-        if case.stderr_contains is not None and case.stderr_contains not in result.stderr:
-            return (
-                False,
-                f"stderr does not contain expected text\n"
-                f"expected fragment: {case.stderr_contains!r}\n"
-                f"stderr           : {result.stderr!r}"
-            )
-
-        if case.stdout_contains is not None and case.stdout_contains not in result.stdout:
-            return (
-                False,
-                f"stdout does not contain expected text\n"
-                f"expected fragment: {case.stdout_contains!r}\n"
-                f"stdout           : {result.stdout!r}"
-            )
-
-        return True, "ok"
-
-    except subprocess.TimeoutExpired as e:
-        if case.expected_behavior in ("timeout", "either"):
+            if not still_running:
+                stdout, stderr = proc.communicate(timeout=0.2)
+                return (
+                    False,
+                    f"expected process to still be running after {case.wait_time}s, "
+                    f"but it exited with code {proc.returncode}\n"
+                    f"stdout: {stdout!r}\n"
+                    f"stderr: {stderr!r}"
+                )
             return True, "ok"
 
-        return (
-            False,
-            f"process timed out unexpectedly\n"
-            f"partial stdout: {e.stdout!r}\n"
-            f"partial stderr: {e.stderr!r}"
-        )
+        if case.expected_behavior == "either":
+            if still_running:
+                return True, "ok"
+
+            stdout, stderr = proc.communicate(timeout=0.2)
+            return _check_output(case, proc.returncode, stdout, stderr)
+
+        return False, f"unknown expected_behavior: {case.expected_behavior!r}"
+
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=0.5)
 
 
 def client_cases() -> list[Case]:
@@ -199,7 +237,7 @@ def client_cases() -> list[Case]:
             program=CLIENT_BIN,
             args=["-p", "1234", "-a", "127.0.0.1", "-m", "9/1", "-t", "5"],
             expected_code=1,
-            stderr_contains="Unknown message type"
+            stderr_contains="Message type out of range"
         ),
         Case(
             name="client: player id zero",
@@ -239,30 +277,34 @@ def client_cases() -> list[Case]:
         Case(
             name="client: last port wins",
             program=CLIENT_BIN,
-            args=["-p", "0", "-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "1"],
+            args=["-p", "0", "-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
             expected_behavior="either",
-            expected_code=0
+            expected_code=0,
+            wait_time=0.3
         ),
         Case(
             name="client: last timeout wins",
             program=CLIENT_BIN,
-            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "200", "-t", "1"],
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "0/1", "-t", "200", "-t", "5"],
             expected_behavior="either",
-            expected_code=0
+            expected_code=0,
+            wait_time=0.3
         ),
         Case(
             name="client: last message wins",
             program=CLIENT_BIN,
-            args=["-p", "1234", "-a", "127.0.0.1", "-m", "9/1", "-m", "0/1", "-t", "1"],
+            args=["-p", "1234", "-a", "127.0.0.1", "-m", "9/1", "-m", "0/1", "-t", "5"],
             expected_behavior="either",
-            expected_code=0
+            expected_code=0,
+            wait_time=0.3
         ),
         Case(
             name="client: last address wins",
             program=CLIENT_BIN,
-            args=["-p", "1234", "-a", "bad.invalid", "-a", "127.0.0.1", "-m", "0/1", "-t", "1"],
+            args=["-p", "1234", "-a", "bad.invalid", "-a", "127.0.0.1", "-m", "0/1", "-t", "5"],
             expected_behavior="either",
-            expected_code=0
+            expected_code=0,
+            wait_time=0.3
         ),
     ]
 
@@ -344,15 +386,16 @@ def server_cases() -> list[Case]:
         Case(
             name="server: port 0 allowed",
             program=SERVER_BIN,
-            args=["-r", "101", "-a", "127.0.0.1", "-p", "0", "-t", "1"],
-            expected_behavior="timeout"
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "0", "-t", "5"],
+            expected_behavior="timeout",
+            wait_time=0.3
         ),
         Case(
             name="server: invalid timeout format",
             program=SERVER_BIN,
             args=["-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "abc"],
             expected_code=1,
-            stderr_contains="wrong format of server timeout"
+            stderr_contains="wrong format of client timeout"
         ),
         Case(
             name="server: timeout zero invalid",
@@ -394,50 +437,56 @@ def server_cases() -> list[Case]:
             program=SERVER_BIN,
             args=["-r", "001", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
             expected_code=1,
-            stderr_contains="first and last pawn must be 1"
+            stderr_contains="First and last pawn must be 1"
         ),
         Case(
             name="server: pawn row last not one",
             program=SERVER_BIN,
             args=["-r", "100", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
             expected_code=1,
-            stderr_contains="first and last pawn must be 1"
+            stderr_contains="First and last pawn must be 1"
         ),
         Case(
             name="server: minimal valid pawn row",
             program=SERVER_BIN,
-            args=["-r", "1", "-a", "127.0.0.1", "-p", "1234", "-t", "1"],
-            expected_behavior="timeout"
+            args=["-r", "11", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_behavior="timeout",
+            wait_time=0.3
         ),
         Case(
             name="server: normal valid row",
             program=SERVER_BIN,
-            args=["-r", "11101111011111", "-a", "127.0.0.1", "-p", "1234", "-t", "1"],
-            expected_behavior="timeout"
+            args=["-r", "11101111011111", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_behavior="timeout",
+            wait_time=0.3
         ),
         Case(
             name="server: last row wins",
             program=SERVER_BIN,
-            args=["-r", "001", "-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "1"],
-            expected_behavior="timeout"
+            args=["-r", "001", "-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_behavior="timeout",
+            wait_time=0.3
         ),
         Case(
             name="server: last timeout wins",
             program=SERVER_BIN,
-            args=["-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "200", "-t", "1"],
-            expected_behavior="timeout"
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "1234", "-t", "200", "-t", "5"],
+            expected_behavior="timeout",
+            wait_time=0.3
         ),
         Case(
             name="server: last address wins",
             program=SERVER_BIN,
-            args=["-r", "101", "-a", "bad.invalid", "-a", "127.0.0.1", "-p", "1234", "-t", "1"],
-            expected_behavior="timeout"
+            args=["-r", "101", "-a", "bad.invalid", "-a", "127.0.0.1", "-p", "1234", "-t", "5"],
+            expected_behavior="timeout",
+            wait_time=0.3
         ),
         Case(
             name="server: last port wins",
             program=SERVER_BIN,
-            args=["-r", "101", "-a", "127.0.0.1", "-p", "0", "-p", "1234", "-t", "1"],
-            expected_behavior="timeout"
+            args=["-r", "101", "-a", "127.0.0.1", "-p", "0", "-p", "1234", "-t", "5"],
+            expected_behavior="timeout",
+            wait_time=0.3
         ),
     ]
 

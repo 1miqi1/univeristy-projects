@@ -23,10 +23,10 @@ constexpr int INPUT_LENGTH = 9;
  * Structure holding parsed client input parameters.
  */
 struct ClientInput {
-    uint16_t port = 0;                    /**< Server port number */
-    time_t client_timeout = 0;          /**< Client timeout value */
-    sockaddr_in server_address{};         /**< Resolved server address */
-    ClientMessage clientMessage{};        /**< Parsed client message */
+    uint16_t port = 0;                    // Server port number 
+    time_t client_timeout = 0;            // Client timeout value 
+    sockaddr_in server_address{};         // Resolved server address 
+    ClientMessage clientMessage{};        // Parsed client message 
 };
 
 /**

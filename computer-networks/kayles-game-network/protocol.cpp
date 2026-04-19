@@ -6,6 +6,7 @@
 #include <ranges>
 #include <span>
 #include <algorithm>
+#include <map>
 
 #include <arpa/inet.h>
 
@@ -18,6 +19,8 @@ constexpr std::size_t MIN_MESSAGE_SIZE = 2;
 constexpr std::size_t BYTE_SIZE = 8;
 constexpr std::size_t MAX_MESSAGE_TYPE = 4;
 constexpr std::size_t MAX_CLIENT_INPUT_MESSAGE_SIZE = 100;
+constexpr std::size_t TYPE_PLAYER_LENGHT = 5;
+constexpr std::size_t TYPE_PLAYER_GAME_LENGTH = 9;
 
 static const std::size_t message_sizes[] = {
     MSG_JOIN_LENGTH,
@@ -41,6 +44,7 @@ ParseResult parse_client_message(const std::string& text, ClientMessage& msg) {
 
     std::vector<std::uint32_t> text_split;
 
+    // Split input string by '/' and validate each segment as a number
     for (auto part : text | std::views::split('/')) {
         if (text_split.size() >= MAX_MESSAGE_SIZE) {
             return {PARSE_ERR_INPUT, "Too many fields"};
@@ -57,7 +61,7 @@ ParseResult parse_client_message(const std::string& text, ClientMessage& msg) {
 
     const std::size_t count = text_split.size();
 
-
+    // Basic structure check: type and player_id are mandatory
     if (count < MIN_MESSAGE_SIZE) {
         return {PARSE_ERR_INPUT, "Message too short: requires type/player_id"};
     }
@@ -67,8 +71,8 @@ ParseResult parse_client_message(const std::string& text, ClientMessage& msg) {
     }
 
     msg.msg_type = static_cast<std::uint8_t>(text_split[TYPE]);
-    
     msg.player_id = text_split[PLAYER_ID];
+    
     if(msg.player_id == 0){
         return {PARSE_ERR_INPUT, "Player index can't be 0"};
     }
@@ -76,6 +80,7 @@ ParseResult parse_client_message(const std::string& text, ClientMessage& msg) {
     msg.game_id = 0;
     msg.pawn = 0;
 
+    // Type-specific field count and range validation
     switch (msg.msg_type) {
         case MSG_JOIN:
             if (count != MSG_JOIN_FIELDS) {
@@ -88,7 +93,7 @@ ParseResult parse_client_message(const std::string& text, ClientMessage& msg) {
             if (count != MSG_MOVE_2_FIELDS) {
                 return {PARSE_ERR_INPUT, "MOVE requires: type/player_id/game_id/pawn"};
             }
-            if (text_split[PAWN] > MAX_PAWN_RANGE) { // Replaced MAX_UINT8 for standard clarity
+            if (text_split[PAWN] > MAX_PAWN_RANGE) {
                 return {PARSE_ERR_INPUT, "Pawn index out of range (0-255)"};
             }
             msg.game_id = text_split[GAME_ID];
@@ -119,22 +124,22 @@ std::string parse_error_string(ParseResult res) {
  */
 
 std::size_t get_client_message_size(const ClientMessage& msg) {
+    // Map internal message type to predefined binary lengths
     if (msg.msg_type >= std::size(message_sizes)) {
         return 0;
     }
     return message_sizes[msg.msg_type];
 }
 
-void handle_invalid_game(std::uint8_t& error_index) {
-    error_index = GAME_ID_INDEX;
-}
 
 void create_wrong_message(WrongMessage& wrong_message,
                           std::span<const std::uint8_t> buf,
                           std::uint8_t error_index) {
+    // Copy as much of the original message as possible up to prefix limit
     const std::size_t size = std::min(buf.size(), CLIENT_MESSAGE_PREFIX_SIZE);
     std::memcpy(wrong_message.client_message_prefix, buf.data(), size);
 
+    // Pad remaining prefix bytes with zeros if original was too short
     if (size < CLIENT_MESSAGE_PREFIX_SIZE) {
         std::memset(wrong_message.client_message_prefix + size,
                     0,
@@ -158,10 +163,12 @@ std::size_t serialize_client_message(const ClientMessage& msg, std::span<std::ui
     std::size_t offset = 0;
     buf[offset++] = msg.msg_type;
 
+    // Convert player_id to Network Byte Order (Big Endian)
     const std::uint32_t net_player_id = htonl(msg.player_id);
     std::memcpy(buf.data() + offset, &net_player_id, sizeof(net_player_id));
     offset += sizeof(net_player_id);
 
+    // Conditionally include game_id based on message type
     if (msg.msg_type == MSG_MOVE_1 || msg.msg_type == MSG_MOVE_2 ||
         msg.msg_type == MSG_KEEP_ALIVE || msg.msg_type == MSG_GIVE_UP) {
         const std::uint32_t net_game_id = htonl(msg.game_id);
@@ -169,6 +176,7 @@ std::size_t serialize_client_message(const ClientMessage& msg, std::span<std::ui
         offset += sizeof(net_game_id);
     }
 
+    // Conditionally include pawn byte
     if (msg.msg_type == MSG_MOVE_1 || msg.msg_type == MSG_MOVE_2) {
         buf[offset++] = msg.pawn;
     }
@@ -186,6 +194,7 @@ std::size_t serialize(const GameState& game_state, std::span<std::uint8_t> buf) 
 
     std::size_t offset = 0;
 
+    // Serialize multi-byte integers to Network Byte Order
     const std::uint32_t net_game_id = htonl(game_state.game_id);
     std::memcpy(buf.data() + offset, &net_game_id, sizeof(net_game_id));
     offset += sizeof(net_game_id);
@@ -201,6 +210,7 @@ std::size_t serialize(const GameState& game_state, std::span<std::uint8_t> buf) 
     buf[offset++] = game_state.status;
     buf[offset++] = game_state.max_pawn;
 
+    // Append variable-length bitset data
     std::memcpy(buf.data() + offset, game_state.pawn_row.data(), pawn_bytes);
     offset += pawn_bytes;
 
@@ -224,101 +234,101 @@ std::size_t serialize(const WrongMessage& wrong_message, std::span<std::uint8_t>
 }
 
 std::size_t serialize(const ServerResponse& server_response, std::span<std::uint8_t> buf) {
+    // Visitor pattern to handle variant types (WrongMessage vs GameState)
     return std::visit([buf](const auto& response) -> std::size_t {
         return serialize(response, buf);
     }, server_response.response);
 }
 
+
+/**
+ * Checks whether a player belongs to the specified game.
+ */
+bool check_game(std::map<std::uint32_t, Game>& games, std::uint32_t game_id, std::uint32_t player_id) {
+    auto it = games.find(game_id);
+    if (it != games.end()) {
+        return it->second.game_state.player_a_id == player_id || it->second.game_state.player_b_id == player_id;
+    }
+    return false;
+}
+
 /**
  * --- DESERIALIZATION (Reading from span) ---
  */
-
 bool deserialize_client_message(ClientMessage& msg,
                                 std::span<const std::uint8_t> buf,
-                                std::size_t recieved_length,
-                                std::uint8_t& error_index) {
+                                std::size_t received_length,
+                                std::uint8_t& error_index,
+                                std::map<std::uint32_t, Game>& games) {
     error_index = 0;
-    if (!recieved_length) return false;
+    
+    if (!received_length) return false;
 
     std::size_t offset = 0;
     msg.msg_type = buf[offset++];
 
-    switch (msg.msg_type) {
-        case MSG_JOIN: {
-            if (recieved_length != MSG_JOIN_LENGTH) {
-                error_index = static_cast<std::uint8_t>(std::min( recieved_length, (std::size_t)MSG_JOIN_LENGTH));
-                return false;
-            }
-
-            std::uint32_t net_player_id = 0;
-            std::memcpy(&net_player_id, buf.data() + offset, sizeof(net_player_id));
-            msg.player_id = ntohl(net_player_id);
-            msg.game_id = 0;
-            msg.pawn = 0;
-
-            if (msg.player_id == 0) {
-                error_index = 1;
-                return false;
-            }
-            break;
-        }
-
-        case MSG_MOVE_1:
-        case MSG_MOVE_2: {
-            const std::size_t expected = (msg.msg_type == MSG_MOVE_1) ? MSG_MOVE_1_LENGTH : MSG_MOVE_2_LENGTH;
-            if (recieved_length != expected) {
-                error_index = static_cast<std::uint8_t>(std::min(recieved_length, expected));
-                return false;
-            }
-
-            std::uint32_t net_player_id = 0;
-            std::uint32_t net_game_id = 0;
-
-            std::memcpy(&net_player_id, buf.data() + offset, sizeof(net_player_id));
-            offset += sizeof(net_player_id);
-            std::memcpy(&net_game_id, buf.data() + offset, sizeof(net_game_id));
-            offset += sizeof(net_game_id);
-
-            msg.player_id = ntohl(net_player_id);
-            msg.game_id = ntohl(net_game_id);
-            msg.pawn = buf[offset];
-            if (msg.player_id == 0) {
-                error_index = 1;
-                return false;
-            }
-            break;
-        }
-
-        case MSG_KEEP_ALIVE:
-        case MSG_GIVE_UP: {
-            const std::size_t expected = (msg.msg_type == MSG_KEEP_ALIVE) ? MSG_KEEP_ALIVE_LENGTH : MSG_GIVE_UP_LENGTH;
-            if (recieved_length != expected) {
-                error_index = static_cast<std::uint8_t>(std::min(recieved_length, expected));
-                return false;
-            }
-
-            std::uint32_t net_player_id = 0;
-            std::uint32_t net_game_id = 0;
-
-            std::memcpy(&net_player_id, buf.data() + offset, sizeof(net_player_id));
-            offset += sizeof(net_player_id);
-            std::memcpy(&net_game_id, buf.data() + offset, sizeof(net_game_id));
-            offset += sizeof(net_game_id);
-
-            msg.player_id = ntohl(net_player_id);
-            msg.game_id = ntohl(net_game_id);
-            msg.pawn = 0;
-            if (msg.player_id == 0) {
-                error_index = 1;
-                return false;
-            }
-            break;
-        }
-
-        default:
-            return false;
+    // Validate type range early
+    if (msg.msg_type > MAX_MESSAGE_TYPE) {
+        error_index = 0;
+        return false;
     }
-    return true;
+
+    // Minimum buffer size check (Type + PlayerID)
+    if (received_length < TYPE_PLAYER_LENGHT) {
+        error_index = static_cast<std::uint8_t>(received_length);
+        return false;
+    }
+
+    // Convert from Network Byte Order to Host Byte Order
+    std::uint32_t net_player_id = 0;
+    std::memcpy(&net_player_id, buf.data() + offset, sizeof(net_player_id));
+    msg.player_id = ntohl(net_player_id);
+    offset += sizeof(net_player_id);
+
+    if (msg.player_id == 0) {
+        error_index = 1; 
+        return false;
+    }
+
+    // Process game_id for all messages except JOIN
+    if (msg.msg_type != MSG_JOIN) {
+        if (received_length < TYPE_PLAYER_GAME_LENGTH) {
+            error_index = static_cast<std::uint8_t>(received_length);
+            return false;
+        }
+
+        std::uint32_t net_game_id = 0;
+        std::memcpy(&net_game_id, buf.data() + offset, sizeof(net_game_id));
+        msg.game_id = ntohl(net_game_id);
+        offset += sizeof(net_game_id);
+
+        // Verify logical existence of the game and player association
+        if (!check_game(games, msg.game_id, msg.player_id)) {
+            error_index = GAME_ID_INDEX;
+            return false;
+        }
+    }
+
+    // Determine expected length for final size verification
+    std::size_t expected = 0;
+    switch (msg.msg_type) {
+        case MSG_JOIN:       expected = MSG_JOIN_LENGTH; break;
+        case MSG_KEEP_ALIVE: expected = MSG_KEEP_ALIVE_LENGTH; break;
+        case MSG_GIVE_UP:    expected = MSG_GIVE_UP_LENGTH; break;
+        case MSG_MOVE_1:
+        case MSG_MOVE_2:     
+            expected = MSG_MOVE_1_LENGTH; 
+            if (received_length >= expected) msg.pawn = buf[offset++];
+            break;
+    }
+
+    // Strict length check to ensure no extra data or missing bytes
+    if (received_length != expected) {
+        error_index = static_cast<std::uint8_t>(std::min(received_length, expected));
+        return false;
+    }
+
+    return true; 
 }
 
 bool deserialize(GameState& game_state, std::span<const std::uint8_t> buf) {
@@ -327,6 +337,7 @@ bool deserialize(GameState& game_state, std::span<const std::uint8_t> buf) {
     std::size_t offset = 0;
     std::uint32_t net_game_id, net_player_a_id, net_player_b_id;
 
+    // Convert fixed-size headers from Network Byte Order
     std::memcpy(&net_game_id, buf.data() + offset, sizeof(net_game_id));
     game_state.game_id = ntohl(net_game_id);
     offset += sizeof(net_game_id);
@@ -342,6 +353,7 @@ bool deserialize(GameState& game_state, std::span<const std::uint8_t> buf) {
     game_state.status = buf[offset++];
     game_state.max_pawn = buf[offset++];
 
+    // Calculate required bytes for bitset and copy
     const std::size_t pawn_bytes = (game_state.max_pawn / BYTE_SIZE) + 1;
     if (buf.size() < offset + pawn_bytes) return false;
 
@@ -366,18 +378,15 @@ bool deserialize(ServerResponse& msg, std::span<const std::uint8_t> buf) {
         return false;
     }
 
+    // Determine specific response type by peaking at the status byte position
     if (buf[CLIENT_MESSAGE_PREFIX_SIZE] == WRONG_MESSAGE_STATUS) {
         WrongMessage wm;
-        if (!deserialize(wm, buf)){
-            return false;
-        }
+        if (!deserialize(wm, buf)) return false;
         msg.response_type = MSG_WRONG_MESSAGE;
         msg.response = wm;
     } else {
         GameState gs;
-        if (!deserialize(gs, buf)){
-            return false;
-        }
+        if (!deserialize(gs, buf)) return false;
         msg.response_type = MSG_CORRECT_MESSAGE;
         msg.response = gs;
     }
@@ -412,6 +421,7 @@ void print(const GameState& gs) {
               << "\n  status       : " << static_cast<unsigned>(gs.status) 
               << "\n  max pawn     : " << static_cast<unsigned>(gs.max_pawn) 
               << "\n  pawn row     : ";
+    // Iterate through bits to display the row state
     for (std::size_t pawn = 0; pawn <= gs.max_pawn; ++pawn) {
         uint8_t bit;
         bitset_get(gs.pawn_row, pawn, bit);
@@ -421,5 +431,6 @@ void print(const GameState& gs) {
 }
 
 void print(const ServerResponse& server_response) {
+    // Visitor to print variant content
     std::visit([](const auto& response) { print(response); }, server_response.response);
 }

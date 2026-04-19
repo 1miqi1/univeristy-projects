@@ -10,17 +10,47 @@
 using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
 
-#include "protocol.h"
+
+// ----------------------------
+// Constants
+// ----------------------------
+
+/**
+ * Represents current state of the game match.
+ */
+enum GameStatus : std::uint8_t {
+    WAITING_FOR_OPPONENT = 0,
+    TURN_A = 1,
+    TURN_B = 2,
+    WIN_A = 3,
+    WIN_B = 4
+};
+
+// ----------------------------
+// Structures
+// ----------------------------
+
+/**
+ * Full game state used for synchronization.
+ */
+typedef struct {
+    std::uint32_t game_id = 0;
+    std::uint32_t player_a_id = 0;
+    std::uint32_t player_b_id = 0;
+    std::uint8_t status = 0;
+    std::uint8_t max_pawn = 0;
+    std::vector<std::uint8_t> pawn_row;
+} GameState;
 
 /** 
  * Represents full game state including timing and remaining pawns.
  */
 typedef struct {
-    TimePoint player_a_activity;        // Timestamp of last a activity
-    TimePoint player_b_activity;        // Timestamp of last b activity
-    TimePoint after_finish_activity;  // Timestamp of last activity including finish
-    std::uint8_t pawns_left;                // Number of pawns still available
-    GameState game_state;                   // Logical game state (players, board, status)
+    TimePoint player_a_activity;             // Timestamp of last a activity
+    TimePoint player_b_activity;             // Timestamp of last b activity
+    TimePoint after_finish_activity;         // Timestamp of last activity including finish
+    std::uint8_t pawns_left;                 // Number of pawns still available
+    GameState game_state;                    // Logical game state (players, board, status)
 } Game;
 
 /**
@@ -48,15 +78,6 @@ Game create_full_game(std::uint32_t game_id,
                       std::uint8_t max_pawn,
                       const std::vector<std::uint8_t>& pawn_row,
                       std::uint8_t pawns_left);
-
-/**
- * Checks if a given player participates in the game.
- *
- * @param game        Game
- * @param player_id   Player identifier
- * @return true if player is part of the game, false otherwise
- */
-bool check_my_game(const Game& game, std::uint32_t player_id);
 
 
 /**
