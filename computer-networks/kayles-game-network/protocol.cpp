@@ -16,6 +16,8 @@
 constexpr std::size_t MAX_MESSAGE_SIZE = 4;
 constexpr std::size_t MIN_MESSAGE_SIZE = 2;
 constexpr std::size_t BYTE_SIZE = 8;
+constexpr std::size_t MAX_MESSAGE_TYPE = 4;
+constexpr std::size_t MAX_CLIENT_INPUT_MESSAGE_SIZE = 100;
 
 static const std::size_t message_sizes[] = {
     MSG_JOIN_LENGTH,
@@ -35,9 +37,14 @@ ParseResult parse_client_message(const std::string& text, ClientMessage& msg) {
         return {PARSE_ERR_INPUT, "Empty string"};
     }
 
+    if (text.size() > MAX_CLIENT_INPUT_MESSAGE_SIZE) return {PARSE_ERR_INPUT, "Text too long"};
+
     std::vector<std::uint32_t> text_split;
 
     for (auto part : text | std::views::split('/')) {
+        if (text_split.size() >= MAX_MESSAGE_SIZE) {
+            return {PARSE_ERR_INPUT, "Too many fields"};
+        }
         std::uint32_t value = 0;
         std::string token(part.begin(), part.end());
 
@@ -50,17 +57,19 @@ ParseResult parse_client_message(const std::string& text, ClientMessage& msg) {
 
     const std::size_t count = text_split.size();
 
-    if (count > MAX_MESSAGE_SIZE) {
-        return {PARSE_ERR_INPUT, "Message too long"};
-    }
 
     if (count < MIN_MESSAGE_SIZE) {
         return {PARSE_ERR_INPUT, "Message too short: requires type/player_id"};
     }
 
+    if(text_split[TYPE] > MAX_MESSAGE_SIZE){
+        return {PARSE_ERR_INPUT, "Message type out of range"};
+    }
+
     msg.msg_type = static_cast<std::uint8_t>(text_split[TYPE]);
+    
     msg.player_id = text_split[PLAYER_ID];
-    if(!msg.player_id){
+    if(msg.player_id == 0){
         return {PARSE_ERR_INPUT, "Player index can't be 0"};
     }
 
