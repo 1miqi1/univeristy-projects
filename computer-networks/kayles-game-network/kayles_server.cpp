@@ -52,101 +52,95 @@ typedef struct {
  * @throws fatal() on invalid input
  */
 ServerInput parse_server_input(int argc, char *argv[]) {
-    ServerInput args;
-    char *host = NULL;
-    std::set<char> flags;
-
-    if (argc < int(INPUT_LENGTH)) {
+    if (argc < int(INPUT_LENGTH) || argc % 2 == 0) {
         fatal("usage: %s -r <pawn row> -a <address> -p <port> -t <client_timeout>\n", argv[0]);
     }
 
-    // ----------------------------
-    // Parse port first
-    // ----------------------------
-    for (int i = 1; i + 1 < argc; i += 2) {
-        if (std::strlen(argv[i]) < 2 || argv[i][0] != '-') {
-            fatal("wrong input: %s", argv[i]);
-        }
-        if (flags.count('p') == 0  && argv[i][1] == 'p') {
-            args.port = read_port(argv[i + 1]);
-            flags.insert('p');
-        }
-    }
-
-    if (!flags.count('p')) {
-        fatal("missing required option: -p");
-    }
+    ServerInput args;
 
     // ----------------------------
-    // Parse remaining arguments
+    // Check for all options
     // ----------------------------
-    for (int i = 1; i + 1 < argc; i += 2) {
-        if (flags.count(argv[i][1])) {
-            continue;
+    const char* port_str = nullptr;
+    const char* addr_str = nullptr;
+    const char* pawn_row_str = nullptr;
+    const char* timeout_str = nullptr;
+
+    for (int i = 1; i < argc; i += 2) {
+        if (std::strlen(argv[i]) != 2 || argv[i][0] != '-') {
+            fatal("wrong option format: %s", argv[i]);
         }
 
-        flags.insert(argv[i][1]);
-        switch (argv[i][1]) {
-            case 'p':
-                break;
+        char opt = argv[i][1];
 
-            case 'a': {
-                host = argv[i + 1];
-                args.server_address = get_server_address(host, args.port);
-                break;
-            }
-
-            case 'r': {
-                std::size_t len = std::strlen(argv[i + 1]);
-                if (len > MAX_PAWN_ROW_LENGTH || len == 0) {
-                    fatal("pawn row length out of range (1-%zu): %s", MAX_PAWN_ROW_LENGTH, argv[i + 1]);
-                }
-
-                args.max_pawn = len - 1;
-
-                std::size_t bytes = (args.max_pawn) / BYTE + 1;
-                args.pawn_row.assign(bytes, 0);
-                args.pawns_left = 0;
-
-                for (std::size_t j = 0; j < len; j++) {
-                    if (argv[i + 1][j] == '1') {
-                        bitset_set(args.pawn_row, j, true);
-                        args.pawns_left += 1;
-                    } else if (argv[i + 1][j] != '0') {
-                        fatal("wrong format of pawn row: %s", argv[i + 1]);
-                    }
-                }
-
-                if (argv[i + 1][0] != '1' || argv[i + 1][len - 1] != '1') {
-                    fatal("First and last pawn must be 1: %s", argv[i + 1]);
-                }
-                break;
-            }
-
-            case 't': {
-                std::uint32_t value;
-                if (!validate_number(argv[i + 1], value)) {
-                    fatal("wrong format of client timeout: %s", argv[i + 1]);
-                }
-
-                if (value == 0 || value > MAX_TIME) {
-                    fatal("client timeout out of range (1-%u): %s", MAX_TIME, argv[i + 1]);
-                }
-
-                args.server_timeout = value;
-                break;
-            }
-
+        switch (opt) {
+            case 'p': port_str = argv[i + 1]; break;
+            case 'a': addr_str = argv[i + 1]; break;
+            case 'r': pawn_row_str = argv[i + 1]; break;
+            case 't': timeout_str = argv[i + 1]; break;
             default:
                 fatal("unknown option: %s", argv[i]);
         }
     }
-    
-    std::cout << args.server_timeout << "\n";
 
-    if (!(flags.count('p') && flags.count('a') && flags.count('t') && flags.count('r'))) {
-        fatal("not all options provided");
+    if (!port_str) fatal("missing required option: -p");
+    if (!addr_str) fatal("missing required option: -a");
+    if (!pawn_row_str) fatal("missing required option: -m");
+    if (!timeout_str) fatal("missing required option: -t");
+
+    // ----------------------------
+    // Validate option inputs
+    // ----------------------------
+
+    // ----------------------------
+    // Validate and convert port
+    // ----------------------------
+    args.port = read_port(port_str);
+
+    // ----------------------------
+    // Resolve server address
+    // ----------------------------
+    args.server_address = get_server_address(addr_str, args.port);
+
+
+    // ----------------------------
+    // Parse and validate pawn_row
+    // ----------------------------
+    std::size_t len = std::strlen(pawn_row_str);
+    if (len > MAX_PAWN_ROW_LENGTH || len == 0) {
+        fatal("pawn row length out of range (1-%zu): %s", MAX_PAWN_ROW_LENGTH, pawn_row_str);
     }
+
+    args.max_pawn = len - 1;
+
+    std::size_t bytes = (args.max_pawn) / BYTE + 1;
+    args.pawn_row.assign(bytes, 0);
+    args.pawns_left = 0;
+
+    for (std::size_t j = 0; j < len; j++) {
+        if (pawn_row_str[j] == '1') {
+            bitset_set(args.pawn_row, j, true);
+            args.pawns_left += 1;
+        } else if (pawn_row_str[j] != '0') {
+            fatal("wrong format of pawn row: %s", pawn_row_str);
+        }
+    }
+
+    if (pawn_row_str[0] != '1' || pawn_row_str[len - 1] != '1') {
+        fatal("First and last pawn must be 1: %s", pawn_row_str);
+    }
+
+    // ----------------------------
+    // Validate and convert timeout
+    // ----------------------------
+    uint32_t value = 0;
+    if (!validate_number(timeout_str, value)) {
+        fatal("wrong format of client timeout: %s", timeout_str);
+    }
+    if (value == 0 || value > MAX_TIME) {
+        fatal("client timeout out of range (1-%u): %s", MAX_TIME, timeout_str);
+    }
+    args.server_timeout = value;
 
     return args;
 }
