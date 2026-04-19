@@ -1,132 +1,222 @@
-# Plan
-- Creation of structures
-- Input parsing
-- Creating package
-- Recieving package Here "Nothing is sent" idk what is happening with buffer
-- Unpacking
-- Sending back
-- Game logic
-
-
+Got it — here’s a **clean GitHub-ready README with badges**, with the *Plan section fully removed* and everything streamlined 👇
 
 ---
 
-# Kayles Network Game
+# 🎯 Kayles Network Game (UDP)
 
-This project implements a **networked version of the Kayles game** using UDP. It consists of a server managing multiple simultaneous games and a client allowing players to join and play games.
+![Language](https://img.shields.io/badge/language-C%2FC%2B%2B-blue)
+![Build](https://img.shields.io/badge/build-Makefile-green)
+![Protocol](https://img.shields.io/badge/protocol-UDP-orange)
+![Architecture](https://img.shields.io/badge/architecture-single--threaded-lightgrey)
+![Status](https://img.shields.io/badge/status-in%20progress-yellow)
+
+A **networked implementation of the Kayles game** using **UDP sockets**.
+The project includes a **server handling multiple concurrent games** and a **client for player interaction**.
 
 ---
 
-## 🗂 File Structure
+## 🧠 About the Game
+
+**Kayles** is a simple two-player game:
+
+* Remove:
+
+  * 🔹 one pawn
+  * 🔹 or two adjacent pawns
+* 🎯 The player who removes the **last pawn wins**
+
+### 🔧 Custom Feature
+
+This implementation allows a **custom initial pawn layout**, defined at server startup.
+
+---
+
+## 🏗 Architecture
+
+```text
+Player → Client → Server → Game Logic
+```
+
+### Key Properties
+
+* ♟ Multiple games handled simultaneously
+* 👥 Players can join multiple games
+* 🔁 Players can control both sides
+* 🌐 Communication via **UDP (IPv4)**
+* ⚙ Server = **event-driven state machine (single-threaded)**
+
+---
+
+## 📦 Project Structure
 
 ```
 kayles/
-├── kayles_server.c      # Main server program, handles UDP communication
-├── kayles_client.c      # Main client program, sends commands to server
-├── game.c               # Game logic: moves, pawn handling, game rules
-├── game.h               # Game logic header
-├── protocol.c           # Serialization/deserialization of messages and game state
-├── protocol.h           # Protocol definitions, message structures, enums
-├── utils.c              # Utility functions: parsing numbers, bitmap helpers
-├── utils.h              # Header for utility functions
-├── err.c                # Error handling and reporting functions
-├── err.h                # Header for error functions
-├── Makefile             # Build rules for server and client
+├── kayles_server.cpp     # UDP server, game manager
+├── kayles_client.cpp     # Client interface
+├── game.cpp              # Core game logic
+├── game.h
+├── protocol.cpp          # Serialization/deserialization
+├── protocol.h
+├── common.cpp            # Utilities (parsing, bitmaps)
+├── common.h
+├── err.cpp               # Error handling
+├── err.h
+├── Makefile
+├── test_kayels.py
+├── test_kayels2.py
 ```
 
 ---
 
-## 📝 File Responsibilities
+## 🚀 Features
 
-### 1. **kayles_server.c**
-
-* Starts the server on a given IP and port.
-* Receives client messages via UDP.
-* Updates game states using `game.c`.
-* Sends serialized `GameState` messages back to clients.
-* Handles timeouts and manages multiple games simultaneously.
-
-### 2. **kayles_client.c**
-
-* Sends messages (`JOIN`, `MOVE`, `KEEP_ALIVE`, `GIVE_UP`) to server.
-* Receives and displays game states.
-* Parses CLI input to create `ClientMessage` structures.
-* Handles client-side timeout.
-
-### 3. **game.c / game.h**
-
-* Implements the core **Kayles game rules**:
-
-  * Legal move checking
-  * Updating pawn rows (bitmaps)
-  * Determining win conditions
-* Provides helper functions for pawn existence and removal.
-
-### 4. **protocol.c / protocol.h**
-
-* Defines **message types** (`MSG_JOIN`, `MSG_MOVE_1`, etc.) and **game status enums**.
-* Structures for **ClientMessage** and **GameState**.
-* Functions to **serialize** (structure → bytes) and **deserialize** (bytes → structure) messages.
-* Functions for determining expected message lengths.
-
-### 5. **utils.c / utils.h**
-
-* General-purpose helper functions:
-
-  * Parsing numbers from strings (`strtoul` with validation)
-  * Bit manipulation for pawn rows
-  * Checking legal ranges
-  * Converting integers to network byte order
-
-### 6. **err.c / err.h**
-
-* Functions for **printing errors** and terminating the program safely.
-* Example: `syserr()`, `fatal()`.
+* ✅ Custom binary application-layer protocol
+* ✅ Safe parsing & strict validation
+* ✅ Bit-level board representation (bitmap)
+* ✅ Multiplayer support over UDP
+* ✅ Timeout handling (client & server)
 
 ---
 
-## ⚡ Build Instructions
+## 📡 Protocol Overview
+
+### Client → Server
+
+| Message          | Description             |
+| ---------------- | ----------------------- |
+| `MSG_JOIN`       | Join or create a game   |
+| `MSG_MOVE_1`     | Remove 1 pawn           |
+| `MSG_MOVE_2`     | Remove 2 adjacent pawns |
+| `MSG_KEEP_ALIVE` | Maintain presence       |
+| `MSG_GIVE_UP`    | Forfeit game            |
+
+---
+
+### Server → Client
+
+* `MSG_GAME_STATE` → current game state
+* `MSG_WRONG_MSG` → invalid message response
+
+---
+
+## 🎮 Game State
+
+Each game includes:
+
+* `game_id`
+* `player_a_id`, `player_b_id`
+* `status`:
+
+  * `WAITING_FOR_OPPONENT`
+  * `TURN_A`, `TURN_B`
+  * `WIN_A`, `WIN_B`
+* `max_pawn`
+* `pawn_row` (bitmap representation)
+
+---
+
+## ⚙️ Build
 
 ```bash
 make
 ```
 
-* Produces two executables:
+### Output
 
-  * `kayles_server`
-  * `kayles_client`
+* `kayles_server`
+* `kayles_client`
+
+### Clean
 
 ```bash
 make clean
 ```
 
-* Removes compiled binaries and object files.
-
 ---
 
-## 🖇 Usage Examples
+## ▶️ Usage
 
-### Start server:
+### Start Server
 
 ```bash
 ./kayles_server -r 1110111 -a 0.0.0.0 -p 12345 -t 10
 ```
 
-### Run client:
+### Run Client
 
 ```bash
-./kayles_client -a 127.0.0.1 -p 12345 -m "0/1" -t 5
+./kayles_client -a 127.0.0.1 -p 12345 -m "1/123/0/3" -t 5
 ```
 
-* `-m` is the message string: `msg_type/player_id/game_id/pawn`
+### Message Format
+
+```
+msg_type/player_id/game_id/pawn
+```
 
 ---
 
-## ⚙ Notes
+## 🔄 Game Flow
 
-* All **multi-byte integers** are transmitted in **network byte order**.
-* The **server is single-threaded** and uses an **event-driven state machine**.
-* **Clients and server communicate only via UDP**, no TCP or external libraries.
-* `utils` and `protocol` ensure safe parsing and encoding of data.
+### Start
+
+1. Player A sends `MSG_JOIN`
+2. Server creates game (`WAITING_FOR_OPPONENT`)
+3. Player B joins → game starts (`TURN_B`)
 
 ---
+
+### Gameplay
+
+* Players send moves via client
+* Server validates and updates state
+* Opponent retrieves updates via `KEEP_ALIVE`
+
+---
+
+### End Conditions
+
+* 🏁 Last pawn removed → winner
+* 🏳 Player gives up
+* ⏱ Timeout → inactive player loses
+
+---
+
+## ⏱ Timeouts
+
+| Type          | Description                    |
+| ------------- | ------------------------------ |
+| Server (`-t`) | Removes inactive games/players |
+| Client (`-t`) | Waits for server response      |
+
+---
+
+
+## 🛠 Technical Notes
+
+* 🌐 All multi-byte values use **network byte order**
+* 🚫 No threads, processes, `select()` or `poll()`
+* ⚙ Server implemented as a **state machine**
+* 🔒 Strict protocol validation
+
+---
+
+## 📚 Technologies
+
+* C / C++
+* POSIX sockets (UDP)
+* Bit-level data structures
+* Custom binary protocol
+
+---
+
+## 🧪 Testing
+
+```bash
+python3 test_kayels.py
+python3 test_kayels2.py
+```
+
+---
+
+
