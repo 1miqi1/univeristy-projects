@@ -844,6 +844,37 @@ class TestMoves:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+    
+    def test_move1_too_short_9_bytes(self, server_process):
+        """
+        Test sending a MOVE_1 message that is only 9 bytes long (missing the pawn byte).
+        The server should respond with a WrongMsg and error_index = 9.
+        """
+        host, port = server_process
+        sock = make_udp_socket()
+
+        # 1. Join to get a game started
+        player_id = 123
+        sock.sendto(pack_join(player_id), (host, port))
+        resp = sock.recv(1024)
+        gs = GameState(resp)
+        game_id = gs.game_id
+
+        # 2. Construct a malformed MOVE_1: Type(1) + PlayerID(4) + GameID(4) = 9 bytes
+        # We use struct.pack without the final 'B' for the pawn
+        malformed_move = struct.pack("!BII", MSG_MOVE_1, player_id, game_id)
+        
+        assert len(malformed_move) == 9
+
+        # 3. Send and analyze response
+        sock.sendto(malformed_move, (host, port))
+        resp = sock.recv(1024)
+        
+        result = parse_response(resp)
+        
+        assert isinstance(result, WrongMsg)
+        assert result.error_index == 9, f"Expected error_index 9, got {result.error_index}"
+        
 
 
 # ===========================================================================
@@ -3704,8 +3735,232 @@ class TestSamePidGame:
                     "Game 2 must survive game 1's (same-pid) expiry"
 
 # ===========================================================================
+# 21. SERVER STARTUP / PARAMETER TESTS
+# ===========================================================================
+
+class TestWrongMessages:
+
+    def test_join_too_short(self, srv_default):
+        """MSG_JOIN must be exactly 5 bytes."""
+        with make_udp_socket() as s:
+            raw = udp_send_recv(s, b"\x00\x00\x00\x00", srv_default.addr())  # 4 bytes
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 4
+    
+    def test_join_too_long_and_wrong_player_id(self, srv_default):
+        """MSG_JOIN longer than 5 bytes is invalid."""
+        with make_udp_socket() as s:
+            raw = udp_send_recv(s, b"\x00\x00\x00\00\x00\xff", srv_default.addr())  # 6 bytes
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 1
+
+    def test_join_too_long(self, srv_default):
+        """MSG_JOIN longer than 5 bytes is invalid."""
+        with make_udp_socket() as s:
+            raw = udp_send_recv(s, b"\x00\x00\x00\x03\xe9\xff", srv_default.addr())  # 6 bytes
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 5
+
+    def test_move1_too_short(self, srv_default):
+        """MSG_MOVE_1 must be exactly 10 bytes."""
+        with make_udp_socket() as s:
+            join_as_player(srv_default.addr(), 1, s)
+            raw = udp_send_recv(s, b"\x01\x00\x00\x00\x01\x00\x00\x00\x00", srv_default.addr())  # 9 bytes
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 9
+    
+    def test_move1_too_short_but_player_and_game_doesnt_match(self, srv_default):
+        """MSG_MOVE_1 must be exactly 10 bytes."""
+        with make_udp_socket() as s:
+            raw = udp_send_recv(s, b"\x01\x00\x00\x03\xe9\x00\x00\x00\x01", srv_default.addr())  # 9 bytes
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 5
+
+    def test_move1_too_long(self, srv_default):
+        """MSG_MOVE_1 longer than 10 bytes is invalid."""
+        with make_udp_socket() as s:
+            gs = join_as_player(srv_default.addr(), 1001, s)
+            bad = struct.pack("!BIIBB", MSG_MOVE_1, 1001, gs.game_id, 0, 123)  # 11 bytes
+            raw = udp_send_recv(s, bad, srv_default.addr())
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 10
+    
+    def test_move1_too_long_but_player_and_game_doesnt_match(self, srv_default):
+        """MSG_MOVE_1 must be exactly 10 bytes."""
+        with make_udp_socket() as s:
+            raw = udp_send_recv(s, b"\x01\x00\x00\x03\xe9\x00\x00\x00\x01\x00\x00", srv_default.addr())  # 11 bytes
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 5
+
+    def test_move2_too_short(self, srv_default):
+        """MSG_MOVE_2 must be exactly 10 bytes."""
+        with make_udp_socket() as s:
+            join_as_player(srv_default.addr(), 1001, s)
+            raw = udp_send_recv(s, b"\x02\x00\x00\x03\xe9\x00\x00\x00\x01", srv_default.addr())  # 9 bytes
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_move2_too_long(self, srv_default):
+        """MSG_MOVE_2 longer than 10 bytes is invalid."""
+        with make_udp_socket() as s:
+            gs = join_as_player(srv_default.addr(), 1001, s)
+            bad = struct.pack("!BIIBB", MSG_MOVE_2, 1001, gs.game_id, 0, 77)  # 11 bytes
+            raw = udp_send_recv(s, bad, srv_default.addr())
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_keep_alive_too_short(self, srv_default):
+        """MSG_KEEP_ALIVE must be exactly 9 bytes."""
+        with make_udp_socket() as s:
+            join_as_player(srv_default.addr(), 1001, s)
+            raw = udp_send_recv(s, b"\x03\x00\x00\x03\xe9\x00\x00\x00", srv_default.addr())  # 8 bytes
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_keep_alive_too_long(self, srv_default):
+        """MSG_KEEP_ALIVE longer than 9 bytes is invalid."""
+        with make_udp_socket() as s:
+            gs = join_as_player(srv_default.addr(), 1001, s)
+            bad = struct.pack("!BIIB", MSG_KEEP_ALIVE, 1001, gs.game_id, 0)  # 10 bytes
+            raw = udp_send_recv(s, bad, srv_default.addr())
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_give_up_too_short(self, srv_default):
+        """MSG_GIVE_UP must be exactly 9 bytes."""
+        with make_udp_socket() as s:
+            join_as_player(srv_default.addr(), 1001, s)
+            raw = udp_send_recv(s, b"\x04\x00\x00\x03\xe9\x00\x00\x00", srv_default.addr())  # 8 bytes
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_give_up_too_long(self, srv_default):
+        """MSG_GIVE_UP longer than 9 bytes is invalid."""
+        with make_udp_socket() as s:
+            gs = join_as_player(srv_default.addr(), 1001, s)
+            bad = struct.pack("!BIIB", MSG_GIVE_UP, 1001, gs.game_id, 0)  # 10 bytes
+            raw = udp_send_recv(s, bad, srv_default.addr())
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_unknown_message_type(self, srv_default):
+        """Unknown msg_type should be rejected."""
+        with make_udp_socket() as s:
+            raw = udp_send_recv(s, b"\x63\x00\x00\x00\x00", srv_default.addr())  # msg_type = 99
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_empty_datagram(self, srv_default):
+        """Empty UDP datagram is invalid."""
+        with make_udp_socket() as s:
+            raw = udp_send_recv(s, b"", srv_default.addr())
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_one_byte_only(self, srv_default):
+        """Datagram containing only msg_type is invalid."""
+        with make_udp_socket() as s:
+            raw = udp_send_recv(s, b"\x00", srv_default.addr())
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_move_with_nonexistent_game_id(self, srv_default):
+        """A message with a non-existent game_id is invalid."""
+        with make_udp_socket() as s:
+            join_as_player(srv_default.addr(), 1001, s)
+            raw = udp_send_recv(
+                s,
+                pack_move1(1001, 0xDEADBEEF, 0),
+                srv_default.addr()
+            )
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_keep_alive_with_nonexistent_game_id(self, srv_default):
+        """KEEP_ALIVE with invalid game_id should be rejected."""
+        with make_udp_socket() as s:
+            join_as_player(srv_default.addr(), 1001, s)
+            raw = udp_send_recv(
+                s,
+                pack_keep_alive(1001, 0xDEADBEEF),
+                srv_default.addr()
+            )
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_give_up_with_nonexistent_game_id(self, srv_default):
+        """GIVE_UP with invalid game_id should be rejected."""
+        with make_udp_socket() as s:
+            join_as_player(srv_default.addr(), 1001, s)
+            raw = udp_send_recv(
+                s,
+                pack_give_up(1001, 0xDEADBEEF),
+                srv_default.addr()
+            )
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_truncated_player_id_in_join(self, srv_default):
+        """JOIN with incomplete player_id field should be rejected."""
+        with make_udp_socket() as s:
+            raw = udp_send_recv(s, b"\x00\x00\x00", srv_default.addr())  # msg_type + partial player_id
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_truncated_game_id_in_move(self, srv_default):
+        """MOVE with incomplete game_id field should be rejected."""
+        with make_udp_socket() as s:
+            join_as_player(srv_default.addr(), 1001, s)
+            raw = udp_send_recv(
+                s,
+                b"\x01\x00\x00\x03\xe9\x00\x00",  # partial game_id
+                srv_default.addr()
+            )
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+    def test_truncated_pawn_index_in_move(self, srv_default):
+        """MOVE with missing pawn index byte should be rejected."""
+        with make_udp_socket() as s:
+            gs = join_as_player(srv_default.addr(), 1001, s)
+            bad = struct.pack("!BII", MSG_MOVE_1, 1001, gs.game_id)  # 9 bytes, pawn missing
+            raw = udp_send_recv(s, bad, srv_default.addr())
+        assert raw is not None
+        resp = parse_response(raw)
+        assert isinstance(resp, WrongMsg)
+
+# ===========================================================================
 # Entry point for direct execution
 # ===========================================================================
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v", "--tb=short"]))

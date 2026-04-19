@@ -102,16 +102,6 @@ enum ParseStatus : int {
     PARSE_ERR_RESOURCE = -2
 };
 
-/**
- * Represents current state of the game match.
- */
-enum GameStatus : std::uint8_t {
-    WAITING_FOR_OPPONENT = 0,
-    TURN_A = 1,
-    TURN_B = 2,
-    WIN_A = 3,
-    WIN_B = 4
-};
 
 // ----------------------------
 // Structures
@@ -135,17 +125,6 @@ struct ClientMessage {
     std::uint8_t pawn = 0;
 };
 
-/**
- * Full game state used for synchronization.
- */
-struct GameState {
-    std::uint32_t game_id = 0;
-    std::uint32_t player_a_id = 0;
-    std::uint32_t player_b_id = 0;
-    std::uint8_t status = 0;
-    std::uint8_t max_pawn = 0;
-    std::vector<std::uint8_t> pawn_row;
-};
 
 /**
  * Error details for WRONG_MESSAGE responses.
@@ -255,7 +234,7 @@ std::size_t serialize(const ServerResponse& server_response, std::span<std::uint
  * @param recieved_length
  * @param error_index       Output parameter for error position
  * @param games             Map of avaliable games
- * @return true on success, false on failure
+ * @return true on success, false on failure. Sets error_index to first wrong bite.
  */
 bool deserialize_client_message(ClientMessage& msg,
                                 std::span<const std::uint8_t> buf,

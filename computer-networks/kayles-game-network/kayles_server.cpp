@@ -165,21 +165,6 @@ void cleanup(std::map<std::uint32_t, Game>& games, std::time_t server_timeout) {
     }
 }
 
-/**
- * Checks whether a player belongs to the specified game.
- *
- * @param games      Map of active games
- * @param game_id    Identifier of the game
- * @param player_id  Identifier of the player
- * @return true if the player belongs to the game, false otherwise
- */
-bool check_game(std::map<std::uint32_t, Game>& games, std::uint32_t game_id, std::uint32_t player_id) {
-    auto it = games.find(game_id);
-    if (it != games.end()) {
-        return check_my_game(it->second, player_id);
-    }
-    return false;
-}
 
 /**
  * Entry point of the server application.
@@ -261,7 +246,7 @@ int main(int argc, char *argv[]) {
         // ----------------------------
         // Message validation
         // ----------------------------
-        if (!deserialize_client_message(games, client_message, buffer, received_length, error_index)) {
+        if (!deserialize_client_message(client_message, buffer, received_length, error_index, games)) {
             // ----------------------------
             // Wrong client message
             // ----------------------------
