@@ -3810,10 +3810,11 @@ class TestWrongMessages:
         """MSG_MOVE_2 must be exactly 10 bytes."""
         with make_udp_socket() as s:
             join_as_player(srv_default.addr(), 1001, s)
-            raw = udp_send_recv(s, b"\x02\x00\x00\x03\xe9\x00\x00\x00\x01", srv_default.addr())  # 9 bytes
+            raw = udp_send_recv(s, b"\x02\x00\x00\x03\xe9\x00\x00\x00\x00", srv_default.addr())  # 9 bytes
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 9
 
     def test_move2_too_long(self, srv_default):
         """MSG_MOVE_2 longer than 10 bytes is invalid."""
@@ -3824,6 +3825,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 10
 
     def test_keep_alive_too_short(self, srv_default):
         """MSG_KEEP_ALIVE must be exactly 9 bytes."""
@@ -3833,6 +3835,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 8
 
     def test_keep_alive_too_long(self, srv_default):
         """MSG_KEEP_ALIVE longer than 9 bytes is invalid."""
@@ -3843,6 +3846,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 9
 
     def test_give_up_too_short(self, srv_default):
         """MSG_GIVE_UP must be exactly 9 bytes."""
@@ -3852,6 +3856,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 8
 
     def test_give_up_too_long(self, srv_default):
         """MSG_GIVE_UP longer than 9 bytes is invalid."""
@@ -3862,6 +3867,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 9
 
     def test_unknown_message_type(self, srv_default):
         """Unknown msg_type should be rejected."""
@@ -3870,6 +3876,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 0
 
     def test_empty_datagram(self, srv_default):
         """Empty UDP datagram is invalid."""
@@ -3878,6 +3885,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 0
 
     def test_one_byte_only(self, srv_default):
         """Datagram containing only msg_type is invalid."""
@@ -3886,6 +3894,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 1
 
     def test_move_with_nonexistent_game_id(self, srv_default):
         """A message with a non-existent game_id is invalid."""
@@ -3899,6 +3908,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 5
 
     def test_keep_alive_with_nonexistent_game_id(self, srv_default):
         """KEEP_ALIVE with invalid game_id should be rejected."""
@@ -3912,6 +3922,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 5
 
     def test_give_up_with_nonexistent_game_id(self, srv_default):
         """GIVE_UP with invalid game_id should be rejected."""
@@ -3925,6 +3936,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 5
 
     def test_truncated_player_id_in_join(self, srv_default):
         """JOIN with incomplete player_id field should be rejected."""
@@ -3933,6 +3945,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 3
 
     def test_truncated_game_id_in_move(self, srv_default):
         """MOVE with incomplete game_id field should be rejected."""
@@ -3946,6 +3959,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 7
 
     def test_truncated_pawn_index_in_move(self, srv_default):
         """MOVE with missing pawn index byte should be rejected."""
@@ -3956,6 +3970,7 @@ class TestWrongMessages:
         assert raw is not None
         resp = parse_response(raw)
         assert isinstance(resp, WrongMsg)
+        assert resp.error_index == 9
 
 # ===========================================================================
 # Entry point for direct execution
