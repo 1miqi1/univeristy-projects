@@ -53,7 +53,7 @@ typedef struct {
  */
 ServerInput parse_server_input(int argc, char *argv[]) {
     if (argc < int(INPUT_LENGTH) || argc % 2 == 0) {
-        fatal("usage: %s -r <pawn row> -a <address> -p <port> -t <client_timeout>\n", argv[0]);
+        fatal("usage: %s -r <pawn row> -a <address> -p <port> -t <server_timeout>\n", argv[0]);
     }
 
     ServerInput args;
@@ -85,7 +85,7 @@ ServerInput parse_server_input(int argc, char *argv[]) {
 
     if (!port_str) fatal("missing required option: -p");
     if (!addr_str) fatal("missing required option: -a");
-    if (!pawn_row_str) fatal("missing required option: -m");
+    if (!pawn_row_str) fatal("missing required option: -r");
     if (!timeout_str) fatal("missing required option: -t");
 
     // ----------------------------
@@ -138,7 +138,7 @@ ServerInput parse_server_input(int argc, char *argv[]) {
         fatal("wrong format of client timeout: %s", timeout_str);
     }
     if (value == 0 || value > MAX_TIME) {
-        fatal("client timeout out of range (1-%u): %s", MAX_TIME, timeout_str);
+        fatal("server timeout out of range (1-%u): %s", MAX_TIME, timeout_str);
     }
     args.server_timeout = value;
 
