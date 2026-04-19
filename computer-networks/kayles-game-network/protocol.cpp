@@ -6,18 +6,22 @@
 #include <ranges>
 #include <span>
 #include <algorithm>
+#include <map>
 
 #include <arpa/inet.h>
 
 #include "protocol.h"
 #include "common.h"
 #include "err.h"
+#include "game.h"
 
 constexpr std::size_t MAX_MESSAGE_SIZE = 4;
 constexpr std::size_t MIN_MESSAGE_SIZE = 2;
 constexpr std::size_t BYTE_SIZE = 8;
 constexpr std::size_t MAX_MESSAGE_TYPE = 4;
 constexpr std::size_t MAX_CLIENT_INPUT_MESSAGE_SIZE = 100;
+constexpr std::size_t TYPE_PLAYER_LENGHT = 5;
+constexpr std::size_t TYPE_PLAYER_GAME_LENGTH = 5;
 
 static const std::size_t message_sizes[] = {
     MSG_JOIN_LENGTH,
@@ -125,9 +129,6 @@ std::size_t get_client_message_size(const ClientMessage& msg) {
     return message_sizes[msg.msg_type];
 }
 
-void handle_invalid_game(std::uint8_t& error_index) {
-    error_index = GAME_ID_INDEX;
-}
 
 void create_wrong_message(WrongMessage& wrong_message,
                           std::span<const std::uint8_t> buf,
@@ -229,96 +230,102 @@ std::size_t serialize(const ServerResponse& server_response, std::span<std::uint
     }, server_response.response);
 }
 
+
+/**
+ * Checks whether a player belongs to the specified game.
+ */
+bool check_game(std::map<std::uint32_t, Game>& games, std::uint32_t game_id, std::uint32_t player_id) {
+    auto it = games.find(game_id);
+    if (it != games.end()) {
+        return check_my_game(it->second, player_id);
+    }
+    return false;
+}
+
 /**
  * --- DESERIALIZATION (Reading from span) ---
  */
-
 bool deserialize_client_message(ClientMessage& msg,
                                 std::span<const std::uint8_t> buf,
-                                std::size_t recieved_length,
-                                std::uint8_t& error_index) {
+                                std::size_t received_length,
+                                std::uint8_t& error_index,
+                                std::map<std::uint32_t, Game>& games) {
+    // Default error to the first byte (message type)
     error_index = 0;
-    if (!recieved_length) return false;
+    
+    // Check if the datagram is empty (error_index remains 0)
+    if (!received_length) return false;
 
     std::size_t offset = 0;
     msg.msg_type = buf[offset++];
 
-    switch (msg.msg_type) {
-        case MSG_JOIN: {
-            if (recieved_length != MSG_JOIN_LENGTH) {
-                error_index = static_cast<std::uint8_t>(std::min( recieved_length, (std::size_t)MSG_JOIN_LENGTH));
-                return false;
-            }
-
-            std::uint32_t net_player_id = 0;
-            std::memcpy(&net_player_id, buf.data() + offset, sizeof(net_player_id));
-            msg.player_id = ntohl(net_player_id);
-            msg.game_id = 0;
-            msg.pawn = 0;
-
-            if (msg.player_id == 0) {
-                error_index = 1;
-                return false;
-            }
-            break;
-        }
-
-        case MSG_MOVE_1:
-        case MSG_MOVE_2: {
-            const std::size_t expected = (msg.msg_type == MSG_MOVE_1) ? MSG_MOVE_1_LENGTH : MSG_MOVE_2_LENGTH;
-            if (recieved_length != expected) {
-                error_index = static_cast<std::uint8_t>(std::min(recieved_length, expected));
-                return false;
-            }
-
-            std::uint32_t net_player_id = 0;
-            std::uint32_t net_game_id = 0;
-
-            std::memcpy(&net_player_id, buf.data() + offset, sizeof(net_player_id));
-            offset += sizeof(net_player_id);
-            std::memcpy(&net_game_id, buf.data() + offset, sizeof(net_game_id));
-            offset += sizeof(net_game_id);
-
-            msg.player_id = ntohl(net_player_id);
-            msg.game_id = ntohl(net_game_id);
-            msg.pawn = buf[offset];
-            if (msg.player_id == 0) {
-                error_index = 1;
-                return false;
-            }
-            break;
-        }
-
-        case MSG_KEEP_ALIVE:
-        case MSG_GIVE_UP: {
-            const std::size_t expected = (msg.msg_type == MSG_KEEP_ALIVE) ? MSG_KEEP_ALIVE_LENGTH : MSG_GIVE_UP_LENGTH;
-            if (recieved_length != expected) {
-                error_index = static_cast<std::uint8_t>(std::min(recieved_length, expected));
-                return false;
-            }
-
-            std::uint32_t net_player_id = 0;
-            std::uint32_t net_game_id = 0;
-
-            std::memcpy(&net_player_id, buf.data() + offset, sizeof(net_player_id));
-            offset += sizeof(net_player_id);
-            std::memcpy(&net_game_id, buf.data() + offset, sizeof(net_game_id));
-            offset += sizeof(net_game_id);
-
-            msg.player_id = ntohl(net_player_id);
-            msg.game_id = ntohl(net_game_id);
-            msg.pawn = 0;
-            if (msg.player_id == 0) {
-                error_index = 1;
-                return false;
-            }
-            break;
-        }
-
-        default:
-            return false;
+    // Validate if the message type is within the defined range
+    if (msg.msg_type > MAX_MESSAGE_TYPE) {
+        error_index = 0;
+        return false;
     }
-    return true;
+
+    // Check if the datagram has at least the minimum length (Type + PlayerID)
+    if (received_length < MIN_MESSAGE_LENGHT) {
+        error_index = static_cast<std::uint8_t>(received_length);
+        return false;
+    }
+
+    // Read 4-byte player_id and convert from Network Byte Order (Big Endian)
+    std::uint32_t net_player_id = 0;
+    std::memcpy(&net_player_id, buf.data() + offset, sizeof(net_player_id));
+    msg.player_id = ntohl(net_player_id);
+    offset += sizeof(net_player_id);
+
+    // Player ID must be a positive integer (Specification 3.2)
+    if (msg.player_id == 0) {
+        error_index = 1; // Error points to the start of the player_id field
+        return false;
+    }
+
+    // Messages other than JOIN must contain a game_id
+    if (msg.msg_type != MSG_JOIN) {
+        // Check if there is enough space in the buffer for game_id
+        if (received_length < TYPE_PLAYER_GAME_LENGTH) {
+            error_index = static_cast<std::uint8_t>(received_length);
+            return false;
+        }
+
+        std::uint32_t net_game_id = 0;
+        std::memcpy(&net_game_id, buf.data() + offset, sizeof(net_game_id));
+        msg.game_id = ntohl(net_game_id);
+        offset += sizeof(net_game_id);
+
+        // Logical validation: Does the game exist and is the player participating?
+        if (!check_game(games, msg.game_id, msg.player_id)) {
+            error_index = GAME_ID_INDEX;
+            return false;
+        }
+    }
+
+    // Determine the expected full message length based on the type
+    std::size_t expected = 0;
+    switch (msg.msg_type) {
+        case MSG_JOIN:       expected = MSG_JOIN_LENGTH; break;
+        case MSG_KEEP_ALIVE: expected = MSG_KEEP_ALIVE_LENGTH; break;
+        case MSG_GIVE_UP:    expected = MSG_GIVE_UP_LENGTH; break;
+        case MSG_MOVE_1:
+        case MSG_MOVE_2:     
+            expected = MSG_MOVE_1_LENGTH; // MOVE_1 and MOVE_2 share the same length
+            // If the pawn byte is present in the buffer, assign it to the structure
+            if (received_length >= expected) msg.pawn = buf[offset++];
+            break;
+    }
+
+    // Length validation:
+    // - If too short: error_index points to the first missing byte (received_length)
+    // - If too long: error_index points to the first extra byte (expected)
+    if (received_length != expected) {
+        error_index = static_cast<std::uint8_t>(std::min(received_length, expected));
+        return false;
+    }
+
+    return true; // Message fully valid and deserialized
 }
 
 bool deserialize(GameState& game_state, std::span<const std::uint8_t> buf) {

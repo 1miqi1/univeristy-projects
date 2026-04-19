@@ -6,6 +6,9 @@
 #include <string>
 #include <variant>
 #include <span>
+#include <map>
+
+#include "game.h"
 
 // ----------------------------
 // Constants
@@ -88,6 +91,7 @@ enum MsgTypeLengths : std::size_t {
     MSG_WRONG_MESSAGE_LENGTH = 14,
     GAME_STATE_HEADER_SIZE = 14,
 };
+
 
 /**
  * Result codes for parsing textual input.
@@ -246,16 +250,18 @@ std::size_t serialize(const ServerResponse& server_response, std::span<std::uint
 /**
  * Deserializes a client message from the provided buffer.
  *
- * @param msg          Output parameter for deserialized message
- * @param buf          Input buffer
+ * @param msg               Output parameter for deserialized message
+ * @param buf               Input buffer
  * @param recieved_length
- * @param error_index  Output parameter for error position
+ * @param error_index       Output parameter for error position
+ * @param games             Map of avaliable games
  * @return true on success, false on failure
  */
 bool deserialize_client_message(ClientMessage& msg,
                                 std::span<const std::uint8_t> buf,
                                 std::size_t recieved_length,
-                                std::uint8_t& error_index);
+                                std::uint8_t& error_index,
+                                std::map<std::uint32_t, Game>& games);
 
 /**
  * Deserializes a game state from the provided buffer.

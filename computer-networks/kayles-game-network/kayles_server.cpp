@@ -261,7 +261,7 @@ int main(int argc, char *argv[]) {
         // ----------------------------
         // Message validation
         // ----------------------------
-        if (!deserialize_client_message(client_message, buffer, received_length, error_index)) {
+        if (!deserialize_client_message(games, client_message, buffer, received_length, error_index)) {
             // ----------------------------
             // Wrong client message
             // ----------------------------
@@ -270,20 +270,7 @@ int main(int argc, char *argv[]) {
                                 error_index);
             server_response.response_type = MSG_WRONG_MESSAGE;
             server_response.response = wrong_message;
-        }
-        else if (client_message.msg_type != MSG_JOIN &&
-                !check_game(games, client_message.game_id, client_message.player_id)) {
-            // ----------------------------
-            // No such game
-            // ----------------------------
-            handle_invalid_game(error_index);
-            create_wrong_message(wrong_message,
-                                std::span<const std::uint8_t>(buffer, BUFFER_SIZE),
-                                error_index);
-            server_response.response_type = MSG_WRONG_MESSAGE;
-            server_response.response = wrong_message;
-        }
-        else {
+        }else {
             // ----------------------------
             // Valid message handling
             // ----------------------------
