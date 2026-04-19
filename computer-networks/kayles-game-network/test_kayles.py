@@ -423,6 +423,7 @@ class TestKaylesServerCliValidation(unittest.TestCase):
         cases = [
             ["-r", "", "-a", HOST, "-p", "0", "-t", "2"],
             ["-r", "0", "-a", HOST, "-p", "0", "-t", "2"],
+            ["-r", "10", "-a", HOST, "-p", "0", "-t", "2"],
             ["-r", "1112", "-a", HOST, "-p", "0", "-t", "2"],
             ["-r", "1" * 257, "-a", HOST, "-p", "0", "-t", "2"],
         ]
@@ -650,6 +651,8 @@ class TestKaylesServerMore(unittest.TestCase):
         time.sleep(3)
 
         expired = self.send_recv(pack_client_msg(MSG_KEEP_ALIVE, 10, game_id))
+        unpack_wrong_msg(expired)
+        #unpack_game_state(expired)
         self.assertIsNotNone(expired)
         self.assertEqual(unpack_wrong_msg(expired)['status'], 255)
 
