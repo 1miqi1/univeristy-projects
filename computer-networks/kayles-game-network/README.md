@@ -1,5 +1,3 @@
-
-
 # 🎯 Kayles Network Game (UDP)
 
 ![Language](https://img.shields.io/badge/language-C%2FC%2B%2B-blue)
