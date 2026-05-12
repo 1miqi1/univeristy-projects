@@ -15,6 +15,8 @@
 #include <set>
 #include <queue>
 #include <ctime>
+#include <chrono>
+#include <algorithm>
 
 #include "err.h"
 #include "common.h"
@@ -318,20 +320,21 @@ int main(int argc, char *argv[]) {
             }
             else {
                 target_game = client_message.game_id;
+                Game& game = games.at(target_game);
 
                 // ----------------------------
                 // Process player move
                 // ----------------------------
-                if (check_my_turn(games[target_game], client_message.player_id)) {
+                if (check_my_turn(game, client_message.player_id)) {
                     switch (client_message.msg_type) {
                         case MSG_MOVE_1:
-                            make_move_1(games[target_game], client_message.pawn);
+                            make_move_1(game, client_message.pawn);
                             break;
                         case MSG_MOVE_2:
-                            make_move_2(games[target_game], client_message.pawn);
+                            make_move_2(game, client_message.pawn);
                             break;
                         case MSG_GIVE_UP:
-                            give_up(games[target_game]);
+                            give_up(game);
                             break;
                         default:
                             break;
