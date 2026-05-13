@@ -15,11 +15,16 @@
 #include <set>
 #include <queue>
 #include <ctime>
+#include <chrono>
+#include <algorithm>
 
 #include "err.h"
 #include "common.h"
 #include "protocol.h"
 #include "game.h"
+
+using TimePoint = Clock::time_point;
+using ScheduledCheck = std::pair<TimePoint, std::uint32_t>;
 
 constexpr std::size_t BUFFER_SIZE = 100;
 constexpr int MAX_TIME = 99;
@@ -145,6 +150,7 @@ ServerInput parse_server_input(int argc, char *argv[]) {
     return args;
 }
 
+
 /**
  * Removes inactive games from the server state.
  *
@@ -152,16 +158,39 @@ ServerInput parse_server_input(int argc, char *argv[]) {
  * within the configured timeout period.
  *
  * @param games           Map of active games
+ * @param timeouts             Set of games and times for which the game can change state
  * @param server_timeout  Timeout for inactivity
  */
-void cleanup(std::map<std::uint32_t, Game>& games, std::time_t server_timeout) {
-    auto it = games.begin();
-    while (it != games.end()) {
-        if (!check_recent_activity(it->second, server_timeout)) {
-            it = games.erase(it);
-        } else {
-            it++;
+void cleanup(std::map<std::uint32_t, Game>& games,
+             std::set<ScheduledCheck>& timeouts,
+             std::time_t server_timeout) {
+    auto now = Clock::now();
+
+    while (!timeouts.empty()) {
+        auto it = timeouts.begin();
+
+        if (it->first > now) {
+            break;
         }
+
+        std::uint32_t game_id = it->second;
+        timeouts.erase(it);
+
+        auto game_it = games.find(game_id);
+        if (game_it == games.end()) {
+            continue;
+        }
+
+        Game& game = game_it->second;
+
+        bool alive = check_recent_activity(game, server_timeout);
+
+        if (!alive) {
+            games.erase(game_it);
+            continue;
+        }
+
+        schedule_game(games, timeouts, game_id, server_timeout);
     }
 }
 
@@ -190,6 +219,7 @@ int main(int argc, char *argv[]) {
     // Server state initialization
     // ----------------------------
     std::map<std::uint32_t, Game> games;
+    std::set<ScheduledCheck> timeouts;
     WrongMessage wrong_message;
     ClientMessage client_message;
     ServerResponse server_response;
@@ -241,7 +271,7 @@ int main(int argc, char *argv[]) {
         // ----------------------------
         // Remove inactive games
         // ----------------------------
-        cleanup(games, args.server_timeout);
+        cleanup(games, timeouts, args.server_timeout);
 
         // ----------------------------
         // Message validation
@@ -290,20 +320,21 @@ int main(int argc, char *argv[]) {
             }
             else {
                 target_game = client_message.game_id;
+                Game& game = games.at(target_game);
 
                 // ----------------------------
                 // Process player move
                 // ----------------------------
-                if (check_my_turn(games[target_game], client_message.player_id)) {
+                if (check_my_turn(game, client_message.player_id)) {
                     switch (client_message.msg_type) {
                         case MSG_MOVE_1:
-                            make_move_1(games[target_game], client_message.pawn);
+                            make_move_1(game, client_message.pawn);
                             break;
                         case MSG_MOVE_2:
-                            make_move_2(games[target_game], client_message.pawn);
+                            make_move_2(game, client_message.pawn);
                             break;
                         case MSG_GIVE_UP:
-                            give_up(games[target_game]);
+                            give_up(game);
                             break;
                         default:
                             break;
@@ -317,7 +348,9 @@ int main(int argc, char *argv[]) {
             // Update player activity time
             // ----------------------------
             update_activity_time(games[target_game], client_message.player_id);
+            schedule_game(games, timeouts, target_game, args.server_timeout);
         }
+
 
         // ----------------------------
         // Serialize response
