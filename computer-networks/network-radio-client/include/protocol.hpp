@@ -19,7 +19,7 @@ int create_http_request(char *request,
                       bool request_meta,
                       const std::string cookie);
 
-bool parse_http_response(const char* line,
+bool parse_http_response_line(const char* line,
                          int bytes,
                          int line_count,
                          HttpResponse *resp);

@@ -13,9 +13,6 @@ void log_set_level(int v);
 
 void log_msg(LogLevel lvl, const char *fmt, ...);
 
-[[noreturn]] void syserr(const char* fmt, ...);
-
-[[noreturn]] void fatal(const char* fmt, ...);
 
 #define LOGE(...) log_msg(LogLevel::ERROR, __VA_ARGS__)
 

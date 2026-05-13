@@ -9,6 +9,9 @@
 #include <openssl/err.h>
 #include <chrono>
 #include <unistd.h>
+#include <stdexcept>
+
+
 
 /**
  * States used by the Connection state machine.

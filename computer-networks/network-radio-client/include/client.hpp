@@ -10,6 +10,7 @@
 #define MAX_BUFFER_SIZE 65536
 #define INPUT_BUFFER_SIZE 64
 
+
 enum class RadioState {
     NOT_CONNECTED,
     SENDING_HTTP,
@@ -29,10 +30,21 @@ struct HttpParsingData {
     HttpResponse response;
 };
 
+enum class StreamState {
+    READING_AUDIO,
+    READING_META_LENGTH,  
+    READING_META_PAYLOAD  
+};
+
 struct AudioStreamData {
-    HttpResponse response;
+    long long icy_metaint = 0;
     long long bytes_until_metadata = 0;
-    bool expecting_metadata = false;
+    long long bytes_to_process = 0;
+    
+    // State machine additions
+    StreamState state = StreamState::READING_AUDIO;
+    size_t meta_bytes_remaining = 0; 
+    std::string metadata_buffer; 
 };
 
 struct Redirecting {
@@ -81,6 +93,7 @@ private:
     uint16_t port;
 
     char network_data_buffer[MAX_BUFFER_SIZE];
+    char audio_data_buffer[MAX_BUFFER_SIZE];
 
     std::string input_buffer = "";
 

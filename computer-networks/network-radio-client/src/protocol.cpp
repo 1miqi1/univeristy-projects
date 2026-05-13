@@ -1,87 +1,86 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdbool.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <stdexcept>
+#include "protocol.hpp"
 
-#include <protocol.hpp>
-#include <logger.hpp>
-
+// Define a specific exception for protocol-level failures
+class ProtocolException : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 void init_http_response(HttpResponse *resp) {
+    if (!resp) throw std::invalid_argument("Response pointer is null");
+    
     resp->status_code = 0;
-    resp->location = {}; // Initialize as empty string
+    resp->location[0] = '\0'; // Using char arrays for storage
     resp->icy_metaint = 0;
     resp->is_chunked = false;
-    resp->cookie = {};   // Initialize as empty string
+    resp->cookie[0] = '\0';
 }
 
-int create_http_request(char *request,
-                        const std::string &host,
-                        const std::string &path,
-                        bool request_meta,
-                        const std::string &cookie) {
+// Now returns the string directly to avoid manual buffer management
+std::string create_http_request(const std::string &host,
+                                const std::string &path,
+                                bool request_meta,
+                                const std::string &cookie) {
+    // We use a local string to build the request safely
+    std::string request;
+    request.reserve(512); // Pre-allocate for performance
 
-    std::string tmp;
-
-    tmp += "GET " + path + " HTTP/1.1\r\n";
-    tmp += "Host: " + host + "\r\n";
-    tmp += "Connection: Keep-Alive\r\n";
+    request += "GET " + path + " HTTP/1.1\r\n";
+    request += "Host: " + host + "\r\n";
+    request += "Connection: Keep-Alive\r\n";
 
     if (request_meta)
-        tmp += "Icy-MetaData: 1\r\n";
+        request += "Icy-MetaData: 1\r\n";
 
     if (!cookie.empty())
-        tmp += "Cookie: " + cookie + "\r\n";
+        request += "Cookie: " + cookie + "\r\n";
 
-    tmp += "\r\n";
+    request += "\r\n";
 
-
-    memcpy(request, tmp.c_str(), tmp.size());
-    return (int)tmp.size();
+    return request;
 }
 
-// Function to parse individual lines of an HTTP response
-bool parse_http_response(const char* line, int bytes, int line_count, 
-                         HttpResponse *resp) {
+void parse_http_response_line(const char* line, int line_count, HttpResponse *resp) {
+    if (!line || !resp) throw std::invalid_argument("Null arguments passed to parser");
 
-    // On the very first line, reset the response structure
     if (line_count == 0) {
         init_http_response(resp);
-    }
 
-    // Analyze the first line (Status Line: e.g., HTTP/1.1 200 OK)
-    if (line_count == 0) {
+        // Exception: Protocol must start with HTTP or ICY
         if (sscanf(line, "HTTP/1.%*d %d", &resp->status_code) != 1) {
-            // Support for older Shoutcast versions starting with "ICY 200 OK"
             if (strncmp(line, "ICY 200", 7) == 0) {
                 resp->status_code = 200;
             } else {
-                return false; // Invalid protocol format
+                throw ProtocolException("Invalid or unsupported protocol header");
             }
         }
     } else {
-        // Case-insensitive header analysis
+        // Handle headers using case-insensitive checks
         
-        // Handle redirection: "Location: https://..."
         if (strncasecmp(line, "Location:", 9) == 0) {
-            sscanf(line + 9, " %1023[^\r\n]", resp->location);
+            // Exception: If Location is present but empty/malformed
+            if (sscanf(line + 9, " %1023[^\r\n]", resp->location) != 1) {
+                throw ProtocolException("Malformed Location header");
+            }
         } 
-        // Handle cookies: extract only the part before the first semicolon
         else if (strncasecmp(line, "Set-Cookie:", 11) == 0) {
+            // We don't throw here because a bad cookie shouldn't kill the stream
             sscanf(line + 11, " %1023[^;\r\n]", resp->cookie);
         }
-        // Metadata interval for Shoutcast streams
         else if (strncasecmp(line, "icy-metaint:", 12) == 0) {
-            sscanf(line + 12, " %d", &resp->icy_metaint);
+            // Exception: Metadata interval must be a valid integer
+            if (sscanf(line + 12, " %d", &resp->icy_metaint) != 1) {
+                throw ProtocolException("Invalid icy-metaint value");
+            }
         }
-        // Check if the body is sent in chunks
         else if (strncasecmp(line, "Transfer-Encoding:", 18) == 0) {
             if (strstr(line, "chunked")) {
                 resp->is_chunked = true;
             }
         }
     }
-
-
-    return true;
 }

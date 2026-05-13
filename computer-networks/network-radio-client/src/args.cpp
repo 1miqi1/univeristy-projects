@@ -6,53 +6,54 @@
 #include <cstring>
 #include <string>
 #include <cstdint>
-#include <string>
+#include <stdexcept> // Added for std::invalid_argument
 #include <boost/url.hpp>
 
 namespace {
 
 constexpr int TIMEOUT_MIN_MS = 100;
 constexpr int TIMEOUT_MAX_MS = 100000;
-
 constexpr int VERBOSITY_MIN = 0;
 constexpr int VERBOSITY_MAX = 4;
-
 constexpr uint16_t HTTP_PORT = 80;
 constexpr uint16_t HTTPS_PORT = 443;
-
 constexpr int MIN_PORT = 1;
 constexpr int MAX_PORT = 65535;
 
-
-bool parse_int(const std::string &s, int min_v, int max_v, int &out) {
+// Now throws instead of returning bool
+void parse_int(const std::string &s, int min_v, int max_v, int &out, const std::string& context) {
     if (s.empty()) {
-        return false;
+        throw std::invalid_argument(context + ": empty value");
     }
+    
     char *end = nullptr;
     errno = 0;
     long v = std::strtol(s.c_str(), &end, 10);
+    
+    // Exception: indicates the input wasn't a valid integer
     if (errno != 0 || end == s.c_str() || *end != '\0') {
-        return false;
+        throw std::invalid_argument(context + ": '" + s + "' is not a valid integer");
     }
+    
+    // Exception: indicates the value is technically an int but outside business logic bounds
     if (v < min_v || v > max_v || v > INT_MAX || v < INT_MIN) {
-        return false;
+        throw std::invalid_argument(context + ": value " + s + " out of range");
     }
     out = static_cast<int>(v);
-    return true;
 }
 
-bool take_value(int &i, int argc, char **argv, std::string &value, std::string &error) {
+// Throws if the user provided a flag (like -u) but forgot the actual value
+std::string take_value(int &i, int argc, char **argv) {
     if (i + 1 >= argc) {
-        error = "missing parameter value";
-        return false;
+        throw std::invalid_argument("missing parameter value for " + std::string(argv[i]));
     }
-    value = argv[++i];
-    return true;
+    return argv[++i];
 }
 
 }
 
-bool parse_url(const std::string& url,
+// Throws if the URL is malformed or missing a host
+void parse_url(const std::string& url,
                std::string& scheme,
                std::string& host,
                std::string& path,
@@ -60,135 +61,86 @@ bool parse_url(const std::string& url,
 {
     auto result = boost::urls::parse_uri(url);
 
-    if (!result)
-        return false;
+    if (!result) {
+        throw std::invalid_argument("invalid URL format: " + url);
+    }
 
     const auto u = *result;
-
     scheme = std::string(u.scheme());
     host   = std::string(u.host());
     path   = std::string(u.path());
 
-    // path normalization
-    if (path.empty())
-        path = "/";
+    if (path.empty()) path = "/";
 
-    // port handling
     if (u.has_port()) {
-        auto port_str = u.port();
         int p = 0;
-
-        if (!parse_int(std::string(port_str), MIN_PORT, MAX_PORT, p))
-            return false;
-
+        // Reusing our throwing parse_int helper
+        parse_int(std::string(u.port()), MIN_PORT, MAX_PORT, p, "URL port");
         port = static_cast<uint16_t>(p);
     } else {
         port = (scheme == "https") ? HTTPS_PORT : HTTP_PORT;
     }
 
-    return !host.empty();
+    if (host.empty()) {
+        throw std::invalid_argument("URL is missing a host: " + url);
+    }
 }
 
-
-bool parse_args(int argc, char **argv, Options &opt, std::string &error) {
+// Main parsing logic: No longer returns bool. 
+// If it completes, 'opt' is guaranteed to be valid.
+void parse_args(int argc, char **argv, Options &opt) {
     opt = Options{};
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i] ? argv[i] : "";
         if (arg.empty() || arg[0] != '-' || arg == "-") {
-            error = "invalid parameter: " + arg;
-            return false;
+            throw std::invalid_argument("invalid parameter structure: " + arg);
         }
 
         for (std::size_t j = 1; j < arg.size(); ++j) {
             const char c = arg[j];
             switch (c) {
-                case 'm':
-                    opt.multiplex = true;
-                    break;
-                case '4':
-                    opt.force_ipv4 = true;
-                    break;
-                case '6':
-                    opt.force_ipv6 = true;
-                    break;
-                case 'q':
-                    opt.verbosity = 0;
-                    break;
+                case 'm': opt.multiplex = true; break;
+                case '4': opt.force_ipv4 = true; break;
+                case '6': opt.force_ipv6 = true; break;
+                case 'q': opt.verbosity = 0; break;
 
                 case 'u': {
-                    std::string value;
-                    if (j + 1 < arg.size()) {
-                        value = arg.substr(j + 1);
-                    } else if (!take_value(i, argc, argv, value, error)) {
-                        return false;
-                    }
+                    std::string value = (j + 1 < arg.size()) ? arg.substr(j + 1) : take_value(i, argc, argv);
                     opt.url = value;
-                    j = arg.size();
+                    j = arg.size(); // Break inner loop
                     break;
                 }
 
                 case 't': {
-                    std::string value;
-                    if (j + 1 < arg.size()) {
-                        value = arg.substr(j + 1);
-                    } else if (!take_value(i, argc, argv, value, error)) {
-                        return false;
-                    }
-
-                    int parsed = 0;
-                    if (!parse_int(value, TIMEOUT_MIN_MS, TIMEOUT_MAX_MS, parsed)) {
-                        error = "invalid -t value: " + value;
-                        return false;
-                    }
-                    opt.timeout_ms = parsed;
+                    std::string value = (j + 1 < arg.size()) ? arg.substr(j + 1) : take_value(i, argc, argv);
+                    parse_int(value, TIMEOUT_MIN_MS, TIMEOUT_MAX_MS, opt.timeout_ms, "timeout (-t)");
                     j = arg.size();
                     break;
                 }
 
                 case 'v': {
-                    std::string value;
-                    if (j + 1 < arg.size()) {
-                        value = arg.substr(j + 1);
-                    } else if (!take_value(i, argc, argv, value, error)) {
-                        return false;
-                    }
-
-                    int parsed = 0;
-                    if (!parse_int(value, VERBOSITY_MIN, VERBOSITY_MAX, parsed)) {
-                        error = "invalid -v value: " + value;
-                        return false;
-                    }
-                    opt.verbosity = parsed;
+                    std::string value = (j + 1 < arg.size()) ? arg.substr(j + 1) : take_value(i, argc, argv);
+                    parse_int(value, VERBOSITY_MIN, VERBOSITY_MAX, opt.verbosity, "verbosity (-v)");
                     j = arg.size();
                     break;
                 }
 
                 default:
-                    error = std::string("unknown parameter: -") + c;
-                    return false;
+                    throw std::invalid_argument(std::string("unknown parameter: -") + c);
             }
         }
     }
 
     if (opt.url.empty()) {
-        error = "missing required parameter -u";
-        return false;
+        throw std::invalid_argument("missing required parameter: -u (URL)");
     }
 
-    if (!parse_url(opt.url,
-                opt.scheme,
-                opt.host,
-                opt.path,
-                opt.port)){
-        error = "invalid URL format";
-        return false;
-    }
+    // This will throw internally if the URL is bad
+    parse_url(opt.url, opt.scheme, opt.host, opt.path, opt.port);
 
     if (opt.force_ipv4 && opt.force_ipv6) {
         opt.force_ipv4 = false;
         opt.force_ipv6 = false;
     }
-
-    return true;
 }
