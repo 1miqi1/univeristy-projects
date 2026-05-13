@@ -18,3 +18,9 @@ struct Options {
 };
 
 bool parse_args(int argc, char **argv, Options &opt, std::string &error);
+
+bool parse_url(const std::string& url,
+               std::string& scheme,
+               std::string& host,
+               std::string& path,
+               uint16_t& port);

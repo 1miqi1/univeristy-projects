@@ -13,19 +13,13 @@
 enum class RadioState {
     NOT_CONNECTED,
     SENDING_HTTP,
-    READING_HTTP,
-    SERVER_CLOSING,
+    REACIVING_HTTP,
     STREAMING_AUDIO,
-    USER_QUIT,
+    SHUTDOWN,
 };
 
-enum class RadioOutput {
-    USER_QUIT,
-    SERVER_CLOSED,
-};
 
 struct SendingData {
-    char* request_str;
     size_t bytes_sent = 0;
     size_t request_len;
 };
@@ -41,21 +35,50 @@ struct AudioStreamData {
     bool expecting_metadata = false;
 };
 
+struct Redirecting {
+    std::string scheme;
+    std::string host;
+    std::string path;
+    std::string cookie;
+};
+
 class RadioClient {
 public:
-    explicit RadioClient(Options opt)
-        : options(std::move(opt)),
-          state(RadioState::NOT_CONNECTED),
+    RadioClient(bool multiplex,
+                int timeout_ms,
+                int family_pref,
+                std::string scheme,
+                std::string host,
+                std::string path,
+                uint16_t port)
+        : state(RadioState::NOT_CONNECTED),
           connection(),
-          state_data(std::monostate{}) {}
+          socket_fd(-1),
+          multiplex(multiplex),
+          timeout_ms(timeout_ms),
+          family_pref(family_pref),
+          scheme(std::move(scheme)),
+          host(std::move(host)),
+          path(std::move(path)),
+          port(port)
+    {}
 
     void run();
 
 private:
-    Options options;
     RadioState state;
     Connection connection;
-    int socket_fd = -1;
+    int socket_fd;
+    
+    bool multiplex;
+    int timeout_ms;
+    int family_pref;
+
+    std::string scheme;
+    std::string host;
+    std::string path;
+    std::string cookie = {};
+    uint16_t port;
 
     char network_data_buffer[MAX_BUFFER_SIZE];
 
@@ -67,11 +90,12 @@ private:
 
     ssize_t handle_write(size_t n, size_t start);
 
-    void handle_send_http();
 
-    void handle_read_http();
+    void handle_sending_audio_data();
 
-    void handle_streaming();
+    void handle_sending_http_data();
+
+    void handle_reading();
 
     void handle_user_input();
 };

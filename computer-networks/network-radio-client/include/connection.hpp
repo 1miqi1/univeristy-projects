@@ -1,88 +1,92 @@
-#pragma once
+#ifndef CONNECTION_HPP
+#define CONNECTION_HPP
 
 #include <string>
-#include <sys/types.h>
-#include <sys/socket.h>
+#include <vector>
 #include <netdb.h>
-#include <unistd.h>
-
+#include <sys/socket.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
-
-
+#include <chrono>
+#include <unistd.h>
 
 /**
- * @enum ConnectionState
- * @brief Represents the current phase of the non-blocking connection process.
+ * States used by the Connection state machine.
  */
 enum class ConnectionState {
     IDLE,
-    CHOOSING_NEW_SOCKET,
-    TRYING_TO_CONNECT,
-    SERVER_CLOSED_CONNECTION,
     CONNECTED,
-    TLS_WANT_READ,
-    TLS_WANT_WRITE,
-    TLS_HANDSHAKING,
-    FAILED
+    SERVER_CLOSED_CONNECTION
 };
 
-/**
- * @class Connection
- * @brief Manages a TCP/TLS network connection using non-blocking I/O.
- *        Designed to work with poll().
- */
 class Connection {
 public:
-    Connection() = default;
+    /**
+     * @param use_tls Initially determines if SSL should be prepared.
+     */
+    Connection(bool use_tls = false) 
+        : scheme("http"),
+          family_pref(AF_UNSPEC),
+          use_tls(use_tls), 
+          sockfd(-1), 
+          list_of_connections(nullptr), 
+          current_connection(nullptr), 
+          ssl(nullptr), 
+          ssl_ctx(nullptr), 
+          state(ConnectionState::IDLE), 
+          ever_connected(false),
+          last_activity(std::chrono::steady_clock::now()) {} 
+
     ~Connection();
 
-    void resolve_name(const std::string& host,
-                      const std::string& port,
-                      int family_pref = AF_UNSPEC);
-
+    // Core Connection Methods
+    void init_tls();
+    void resolve_name(const std::string& scheme, const std::string& host, 
+                      const std::string& port, int family_pref);
     void connect();
+    void try_next_address();
     void reconnect();
     void close_connection();
 
-    // =========================
-    // Poll-friendly interface
-    // =========================
+    // I/O Methods (Non-blocking after successful connect)
+    ssize_t read(void *buf, size_t len);
+    ssize_t write(const void *buf, size_t len);
+    ssize_t pending();
 
+    // Time handling
+    // Returns the absolute time point of the deadline
+    long long get_ms_until_timeout(int timeout_ms);
+
+    // Getters 
     int get_sockfd() const { return sockfd; }
     ConnectionState get_state() const { return state; }
-    bool is_connected() const { return state == ConnectionState::CONNECTED; }
-
-    // Unified I/O (TCP or TLS)
-    int read(void *buf, size_t len);
-    int write(const void *buf, size_t len);
-
-    // IMPORTANT for poll + SSL buffering
-    int pending();
-
-    bool is_tls_enabled() const { return use_tls; }
-
-    void enable_tls(bool v) { use_tls = v; }
+    bool has_ever_connected() const { return ever_connected; }
 
 private:
-    void try_next_address();
-    void init_tls();
-
-    int sockfd = -1;
-
+    // Connection Info
+    std::string scheme; 
     std::string host;
     std::string port;
-    int family_pref = AF_UNSPEC;
+    int family_pref;
+    bool use_tls;
 
-    bool ever_connected = false;
+    // Socket & Network members
+    int sockfd;
+    struct addrinfo *list_of_connections;
+    struct addrinfo *current_connection;
 
-    // TLS
-    SSL *ssl = nullptr;
-    SSL_CTX *ssl_ctx = nullptr;
-    bool use_tls = false;
+    // OpenSSL members
+    SSL *ssl;
+    SSL_CTX *ssl_ctx;
 
-    ConnectionState state = ConnectionState::IDLE;
+    // State tracking
+    ConnectionState state;
+    bool ever_connected;
+    std::chrono::steady_clock::time_point last_activity;
 
-    struct addrinfo *list_of_connections = nullptr;
-    struct addrinfo *current_connection = nullptr;
-};
+    // Prevent copying
+    Connection(const Connection&) = delete;
+    Connection& operator=(const Connection&) = delete;
+}; // Added missing semicolon here
+
+#endif // CONNECTION_HPP

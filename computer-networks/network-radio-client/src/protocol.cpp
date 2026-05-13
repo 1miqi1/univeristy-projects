@@ -6,42 +6,38 @@
 #include <protocol.hpp>
 #include <logger.hpp>
 
-#define MAX_HEADER_LINE 2048
 
 void init_http_response(HttpResponse *resp) {
     resp->status_code = 0;
-    resp->location[0] = '\0'; // Initialize as empty string
+    resp->location = {}; // Initialize as empty string
     resp->icy_metaint = 0;
     resp->is_chunked = false;
-    resp->cookie[0] = '\0';   // Initialize as empty string
+    resp->cookie = {};   // Initialize as empty string
 }
 
-int send_http_request(char *request, 
-                      const char *host, 
-                      const char *path, 
-                      bool request_meta, 
-                      const char *cookie) {
-    int len = 0;
+int create_http_request(char *request,
+                        const std::string &host,
+                        const std::string &path,
+                        bool request_meta,
+                        const std::string &cookie) {
 
-    // Construct the Request Line and mandatory Host header
-    len += snprintf(request + len, MAX_HEADER_LINE - len, "GET %s HTTP/1.1\r\n", path);
-    len += snprintf(request + len, MAX_HEADER_LINE - len, "Host: %s\r\n", host);
-    len += snprintf(request + len, MAX_HEADER_LINE - len, "Connection: Keep-Alive\r\n");
+    std::string tmp;
 
-    // Optional: Request Shoutcast metadata (track titles)
-    if (request_meta) {
-        len += snprintf(request + len, MAX_HEADER_LINE - len, "Icy-MetaData: 1\r\n");
-    }
+    tmp += "GET " + path + " HTTP/1.1\r\n";
+    tmp += "Host: " + host + "\r\n";
+    tmp += "Connection: Keep-Alive\r\n";
 
-    // Optional: Send session cookies if available
-    if (cookie && strlen(cookie) > 0) {
-        len += snprintf(request + len, MAX_HEADER_LINE - len, "Cookie: %s\r\n", cookie);
-    }
+    if (request_meta)
+        tmp += "Icy-MetaData: 1\r\n";
 
-    // Every HTTP request must end with an empty line (\r\n)
-    len += snprintf(request + len, MAX_HEADER_LINE - len, "\r\n");
+    if (!cookie.empty())
+        tmp += "Cookie: " + cookie + "\r\n";
 
-    return len;
+    tmp += "\r\n";
+
+
+    memcpy(request, tmp.c_str(), tmp.size());
+    return (int)tmp.size();
 }
 
 // Function to parse individual lines of an HTTP response

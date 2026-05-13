@@ -50,6 +50,8 @@ bool take_value(int &i, int argc, char **argv, std::string &value, std::string &
     return true;
 }
 
+}
+
 bool parse_url(const std::string& url,
                std::string& scheme,
                std::string& host,
@@ -87,7 +89,6 @@ bool parse_url(const std::string& url,
     return !host.empty();
 }
 
-} // namespace
 
 bool parse_args(int argc, char **argv, Options &opt, std::string &error) {
     opt = Options{};
