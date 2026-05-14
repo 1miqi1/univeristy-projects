@@ -5,3 +5,4 @@ Todo dopytac to co oznacza sensowen:
 
 Todo:
 -print client message
+- change to chars isnetad of strings

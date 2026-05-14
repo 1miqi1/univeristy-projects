@@ -32,7 +32,8 @@ public:
 };
 
 /**
- * Errors involving the system/network layer (wraps errno).
+ * Errors involving the system/network layer (wraps errno / system errors).
+ * This covers low-level system failures (e.g., socket creation failed).
  */
 class NetworkError : public std::system_error {
 public:
@@ -49,15 +50,26 @@ public:
 };
 
 /**
- * Errors for invalid command-line arguments.
+ * Base class for connection-related issues.
  */
-class ArgumentError : public RadioError {
+class ConnectionException : public RadioError {
 public:
     using RadioError::RadioError;
 };
 
+/**
+ * Specifically thrown when the server unexpectedly drops the connection.
+ */
 class ServerDisconnectedException : public ConnectionException {
 public:
     ServerDisconnectedException() : ConnectionException("Server closed the connection") {}
 };
 
+/**
+ * Catch-all exception for malformed usage (e.g., improper URL, bad message type).
+ * Classifying them under one unified exception keeps the hierarchy clean.
+ */
+class InvalidRequestException : public RadioError {
+public:
+    using RadioError::RadioError;
+};

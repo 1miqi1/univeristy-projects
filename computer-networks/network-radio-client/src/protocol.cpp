@@ -2,22 +2,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <stdexcept>
 #include "protocol.hpp"
+#include "exceptions.hpp" // Added our new exceptions header
 
-// Define a specific exception for protocol-level failures
-class ProtocolException : public std::runtime_error {
-    using std::runtime_error::runtime_error;
-};
-
-void init_http_response(HttpResponse *resp) {
-    if (!resp) throw std::invalid_argument("Response pointer is null");
-    
-    resp->status_code = 0;
-    resp->location[0] = '\0'; // Using char arrays for storage
-    resp->icy_metaint = 0;
-    resp->is_chunked = false;
-    resp->cookie[0] = '\0';
+void init_http_response(HttpResponse& resp) {
+    resp.status_code = 0;
+    resp.location[0] = '\0'; // Using char arrays for storage
+    resp.icy_metaint = 0;
+    resp.is_chunked = false;
+    resp.cookie[0] = '\0';
 }
 
 // Now returns the string directly to avoid manual buffer management
@@ -44,41 +37,47 @@ std::string create_http_request(const std::string &host,
     return request;
 }
 
-void parse_http_response_line(const char* line, int line_count, HttpResponse *resp) {
-    if (!line || !resp) throw std::invalid_argument("Null arguments passed to parser");
+#include <string>
+#include <cstring> // for strncasecmp
+#include <algorithm>
+
+void parse_http_response_line(const std::string &line, int line_count, HttpResponse *resp) {
+    // line is a reference, so it cannot be null. We only check resp.
+    if (!resp) throw InvalidRequestException("Null response object passed to parser");
 
     if (line_count == 0) {
-        init_http_response(resp);
 
-        // Exception: Protocol must start with HTTP or ICY
-        if (sscanf(line, "HTTP/1.%*d %d", &resp->status_code) != 1) {
-            if (strncmp(line, "ICY 200", 7) == 0) {
+        // Use c_str() to provide the char* sscanf expects
+        if (sscanf(line.c_str(), "HTTP/1.%*d %d", &resp->status_code) != 1) {
+            // Check for ICY protocol (common in SHOUTcast/Icecast streams)
+            if (line.compare(0, 7, "ICY 200") == 0) {
                 resp->status_code = 200;
             } else {
-                throw ProtocolException("Invalid or unsupported protocol header");
+                throw ProtocolError("Invalid or unsupported protocol header");
             }
         }
     } else {
-        // Handle headers using case-insensitive checks
-        
-        if (strncasecmp(line, "Location:", 9) == 0) {
-            // Exception: If Location is present but empty/malformed
-            if (sscanf(line + 9, " %1023[^\r\n]", resp->location) != 1) {
-                throw ProtocolException("Malformed Location header");
+        // We use c_str() for strncasecmp as C++ std::string doesn't have 
+        // a built-in case-insensitive "starts_with" until C++20/newer logic.
+        const char* c_line = line.c_str();
+
+        if (strncasecmp(c_line, "Location:", 9) == 0) {
+            // Pointer arithmetic requires starting from c_str()
+            if (sscanf(c_line + 9, " %1023[^\r\n]", resp->location) != 1) {
+                throw ProtocolError("Malformed Location header");
             }
         } 
-        else if (strncasecmp(line, "Set-Cookie:", 11) == 0) {
-            // We don't throw here because a bad cookie shouldn't kill the stream
-            sscanf(line + 11, " %1023[^;\r\n]", resp->cookie);
+        else if (strncasecmp(c_line, "Set-Cookie:", 11) == 0) {
+            sscanf(c_line + 11, " %1023[^;\r\n]", resp->cookie);
         }
-        else if (strncasecmp(line, "icy-metaint:", 12) == 0) {
-            // Exception: Metadata interval must be a valid integer
-            if (sscanf(line + 12, " %d", &resp->icy_metaint) != 1) {
-                throw ProtocolException("Invalid icy-metaint value");
+        else if (strncasecmp(c_line, "icy-metaint:", 12) == 0) {
+            if (sscanf(c_line + 12, " %d", &resp->icy_metaint) != 1) {
+                throw ProtocolError("Invalid icy-metaint value");
             }
         }
-        else if (strncasecmp(line, "Transfer-Encoding:", 18) == 0) {
-            if (strstr(line, "chunked")) {
+        else if (strncasecmp(c_line, "Transfer-Encoding:", 18) == 0) {
+            // Use std::string::find for the substring check
+            if (line.find("chunked") != std::string::npos) {
                 resp->is_chunked = true;
             }
         }

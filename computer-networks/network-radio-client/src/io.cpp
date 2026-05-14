@@ -1,19 +1,20 @@
 #include "io.hpp"
 #include "logger.hpp"
+#include "exceptions.hpp" // Added your exceptions header
 
 #include <unistd.h>
 #include <cstdint>
 #include <string>
 #include <iostream>
-#include <string>
+#include <cerrno> // Required for errno
 
-void handle_audio(const uint8_t* data, size_t len) {
-    if (!data || len == 0) return;
+void handle_audio(const char* buffer, size_t len) {
+    if (!buffer || len == 0) return;
 
     size_t written = 0;
 
     while (written < len) {
-        ssize_t n = write(STDOUT_FILENO, data + written, len - written);
+        ssize_t n = write(STDOUT_FILENO, buffer + written, len - written);
 
         if (n > 0) {
             written += (size_t)n;
@@ -24,32 +25,14 @@ void handle_audio(const uint8_t* data, size_t len) {
             continue; // retry
         }
 
-        syserr("write audio failed");
-        return;
+        // Replaced syserr with NetworkError
+        throw NetworkError(errno, "write audio failed");
     }
 }
 
-int read_user_line(char* buffer, size_t size) {
-    ssize_t n = read(STDIN_FILENO, buffer, size);
 
-    if (n > 0) {
-        return (int)n; 
-    }
 
-    if (n == 0) {
-        LOGW("stdin closed (EOF)");
-        return 0; 
-    }
-
-    if (errno == EINTR) {
-        return -1; 
-    }
-
-    syserr("stdin error");
-    return -2; 
-}
-
-void handle_metadata(const uint8_t* data, size_t len) {
+void handle_metadata(const char* data, size_t len) {
     if (!data || len <= 1) return;
 
     size_t meta_len = (size_t)data[0] * 16;
@@ -81,6 +64,7 @@ void handle_metadata(const uint8_t* data, size_t len) {
             continue;
         }
 
-        syserr("write metadata failed");
+        // Replaced syserr with NetworkError
+        throw NetworkError(errno, "write metadata failed");
     }
 }

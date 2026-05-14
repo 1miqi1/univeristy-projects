@@ -139,8 +139,5 @@ void parse_args(int argc, char **argv, Options &opt) {
     // This will throw internally if the URL is bad
     parse_url(opt.url, opt.scheme, opt.host, opt.path, opt.port);
 
-    if (opt.force_ipv4 && opt.force_ipv6) {
-        opt.force_ipv4 = false;
-        opt.force_ipv6 = false;
-    }
+
 }
