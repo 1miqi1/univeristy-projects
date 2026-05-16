@@ -12,23 +12,28 @@ void log_set_level(int v) {
     g_level = v;
 }
 
-static void vprint(const char *fmt, va_list ap) {
-    std::vfprintf(stderr, fmt, ap);
-    std::fprintf(stderr, "\n");
-}
 
 void log_msg(LogLevel lvl, const char *fmt, ...) {
     if ((int)lvl > g_level) return;
 
-    if (lvl == LogLevel::WARN) {
-        std::fprintf(stderr, "WARN: ");
-    }
-    else if (lvl == LogLevel::DEBUG) {
-        std::fprintf(stderr, "DEBUG: ");
+    switch (lvl) {
+        case LogLevel::DEBUG:
+            std::fprintf(stderr, "[DEBUG]: ");
+            break;
+        case LogLevel::WARN:
+            std::fprintf(stderr, "[WARN ]: ");
+            break;
+        case LogLevel::ERROR:
+            std::fprintf(stderr, "[ERROR]: ");
+            break;
+        default:
+            break;
     }
 
     va_list ap;
     va_start(ap, fmt);
-    vprint(fmt, ap);
+    vfprintf(stderr, fmt, ap);
     va_end(ap);
+
+    std::fprintf(stderr, "\n");
 }
