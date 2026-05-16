@@ -2,85 +2,141 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <stdexcept>
 #include "protocol.hpp"
+#include "exceptions.hpp" // Added our new exceptions header
 
-// Define a specific exception for protocol-level failures
-class ProtocolException : public std::runtime_error {
-    using std::runtime_error::runtime_error;
-};
+namespace{
+    static bool iequals_prefix(const std::string &line, const char *prefix) {
+    size_t n = strlen(prefix);
+    if (line.size() < n) return false;
 
-void init_http_response(HttpResponse *resp) {
-    if (!resp) throw std::invalid_argument("Response pointer is null");
-    
-    resp->status_code = 0;
-    resp->location[0] = '\0'; // Using char arrays for storage
-    resp->icy_metaint = 0;
-    resp->is_chunked = false;
-    resp->cookie[0] = '\0';
+    for (size_t i = 0; i < n; i++) {
+        char a = line[i];
+        char b = prefix[i];
+
+        if (a >= 'A' && a <= 'Z') a += 32;
+        if (b >= 'A' && b <= 'Z') b += 32;
+
+        if (a != b) return false;
+    }
+    return true;
+}
 }
 
-// Now returns the string directly to avoid manual buffer management
-std::string create_http_request(const std::string &host,
-                                const std::string &path,
-                                bool request_meta,
-                                const std::string &cookie) {
-    // We use a local string to build the request safely
-    std::string request;
-    request.reserve(512); // Pre-allocate for performance
-
-    request += "GET " + path + " HTTP/1.1\r\n";
-    request += "Host: " + host + "\r\n";
-    request += "Connection: Keep-Alive\r\n";
-
-    if (request_meta)
-        request += "Icy-MetaData: 1\r\n";
-
-    if (!cookie.empty())
-        request += "Cookie: " + cookie + "\r\n";
-
-    request += "\r\n";
-
-    return request;
+void init_http_response(HttpResponse& resp) {
+    resp.status_code = 0;
+    resp.location.clear();
+    resp.icy_metaint = 0;
+    resp.is_chunked = false;
+    resp.cookie.clear();
 }
 
-void parse_http_response_line(const char* line, int line_count, HttpResponse *resp) {
-    if (!line || !resp) throw std::invalid_argument("Null arguments passed to parser");
+size_t create_http_request(char *request,
+                           const std::string& host,
+                           const std::string& path,
+                           bool request_meta,
+                           const std::string& cookie) {
+    // Use snprintf to prevent buffer overflows. 
+    // Assuming request buffer is at least MAX_BUFFER_SIZE.
+    int written = sprintf(request,
+        "GET %s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "Connection: Keep-Alive\r\n",
+        path.c_str(), host.c_str());
 
+    char* ptr = request + written;
+
+    if (request_meta) {
+        ptr += sprintf(ptr, "Icy-MetaData: 1\r\n");
+    }
+
+    if (!cookie.empty()) {
+        ptr += sprintf(ptr, "Cookie: %s\r\n", cookie.c_str());
+    }
+
+    ptr += sprintf(ptr, "\r\n");
+
+    // Return the total length written
+    return (size_t)(ptr - request);
+}
+
+#include <string>
+#include <cstring> // for strncasecmp
+#include <algorithm>
+
+void parse_http_response_line(const std::string &line,
+                              int line_count,
+                              HttpResponse &resp) {
+
+    // -------------------------
+    // Status line (first line)
+    // -------------------------
     if (line_count == 0) {
-        init_http_response(resp);
+        int code = 0;
 
-        // Exception: Protocol must start with HTTP or ICY
-        if (sscanf(line, "HTTP/1.%*d %d", &resp->status_code) != 1) {
-            if (strncmp(line, "ICY 200", 7) == 0) {
-                resp->status_code = 200;
-            } else {
-                throw ProtocolException("Invalid or unsupported protocol header");
-            }
+        // Try HTTP/1.x format
+        if (sscanf(line.c_str(), "HTTP/1.%*d %d", &code) == 1) {
+            resp.status_code = code;
+            return;
         }
-    } else {
-        // Handle headers using case-insensitive checks
-        
-        if (strncasecmp(line, "Location:", 9) == 0) {
-            // Exception: If Location is present but empty/malformed
-            if (sscanf(line + 9, " %1023[^\r\n]", resp->location) != 1) {
-                throw ProtocolException("Malformed Location header");
-            }
-        } 
-        else if (strncasecmp(line, "Set-Cookie:", 11) == 0) {
-            // We don't throw here because a bad cookie shouldn't kill the stream
-            sscanf(line + 11, " %1023[^;\r\n]", resp->cookie);
+
+        // ICY fallback (streaming protocols)
+        if (line.rfind("ICY 200", 0) == 0) {
+            resp.status_code = 200;
+            return;
         }
-        else if (strncasecmp(line, "icy-metaint:", 12) == 0) {
-            // Exception: Metadata interval must be a valid integer
-            if (sscanf(line + 12, " %d", &resp->icy_metaint) != 1) {
-                throw ProtocolException("Invalid icy-metaint value");
-            }
+
+        throw ProtocolError("Invalid or unsupported protocol header");
+    }
+
+    // -------------------------
+    // Headers
+    // -------------------------
+
+    auto trim_left = [](const std::string &s, size_t pos) {
+        while (pos < s.size() && s[pos] == ' ') pos++;
+        return pos;
+    };
+
+    const std::string &l = line;
+
+    // Location
+    if (iequals_prefix(l, "Location:")) {
+        size_t pos = trim_left(l, 9);
+        resp.location = l.substr(pos);
+        return;
+    }
+
+    // Set-Cookie
+    if (iequals_prefix(l, "Set-Cookie:")) {
+        size_t pos = trim_left(l, 11);
+        std::string cookie = l.substr(pos);
+
+        // Optional: strip attributes after ';'
+        size_t semi = cookie.find(';');
+        if (semi != std::string::npos)
+            cookie = cookie.substr(0, semi);
+
+        resp.cookie = cookie;
+        return;
+    }
+
+    // icy-metaint
+    if (iequals_prefix(l, "icy-metaint:")) {
+        size_t pos = trim_left(l, 12);
+        try {
+            resp.icy_metaint = std::stoi(l.substr(pos));
+        } catch (...) {
+            throw ProtocolError("Invalid icy-metaint value");
         }
-        else if (strncasecmp(line, "Transfer-Encoding:", 18) == 0) {
-            if (strstr(line, "chunked")) {
-                resp->is_chunked = true;
-            }
+        return;
+    }
+
+    // Transfer-Encoding
+    if (iequals_prefix(l, "Transfer-Encoding:")) {
+        if (l.find("chunked") != std::string::npos) {
+            resp.is_chunked = true;
         }
+        return;
     }
 }

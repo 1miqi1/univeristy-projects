@@ -1,5 +1,6 @@
 #include "connection.hpp"
 #include "logger.hpp"
+#include "exceptions.hpp" // Added the exceptions header
 #include <iostream>
 #include <cstring>
 #include <fcntl.h>
@@ -7,7 +8,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <unistd.h>
-#include <openssl/err.h> // Required for ERR_get_error
+#include <openssl/err.h>
 
 namespace {
     static std::string get_timestamp() {
@@ -57,8 +58,10 @@ void Connection::init_tls() {
 
     ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (!ssl_ctx) {
-        throw SSLException("SSL_CTX_new failed initializing context: " + get_openssl_error());
+        throw ConnectionException("SSL_CTX_new failed initializing context: " + get_openssl_error());
     }
+
+    SSL_CTX_set_default_verify_paths(ssl_ctx);  
 }
 
 void Connection::resolve_name(const std::string& scheme, const std::string& host, const std::string& port, int family_pref) {
@@ -84,7 +87,9 @@ void Connection::resolve_name(const std::string& scheme, const std::string& host
     int s = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
     
     if (s != 0) {
-        throw ResolveException("getaddrinfo failed for " + host + ": " + std::string(gai_strerror(s)));
+        // getaddrinfo doesn't set errno, it returns its own error codes. 
+        // We throw the string under our unified ConnectionException.
+        throw ConnectionException("getaddrinfo failed for " + host + ": " + std::string(gai_strerror(s)));
     }
 
     this->list_of_connections = result;
@@ -93,7 +98,8 @@ void Connection::resolve_name(const std::string& scheme, const std::string& host
 
 void Connection::connect() {
     if (!this->list_of_connections) {
-        throw ConnectionException("No addresses available to attempt connection. Did you call resolve_name?");
+        // Catch-all for improper usage/bad request state
+        throw InvalidRequestException("No addresses available to attempt connection. Did you call resolve_name?");
     }
 
     bool successfully_connected = false;
@@ -129,11 +135,14 @@ void Connection::connect() {
             if (!ssl) {
                 close(sockfd);
                 sockfd = -1;
-                throw SSLException("SSL_new failed: " + get_openssl_error());
+                throw ConnectionException("SSL_new failed: " + get_openssl_error());
             }
             SSL_set_fd(ssl, sockfd);
 
+            SSL_set_tlsext_host_name(ssl, this->host.c_str());
+            
             int ret = SSL_connect(ssl);
+
             if (ret <= 0) {
                 last_error_msg = "SSL handshake failed to " + std::string(ip_buf) + ": " + get_openssl_error();
                 LOGW("Non-critical Error: %s", last_error_msg.c_str());
@@ -150,7 +159,8 @@ void Connection::connect() {
         int flags = fcntl(sockfd, F_GETFL, 0);
         if (flags == -1 || fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1) {
             close_connection();
-            throw ConnectionException("Failed to set O_NONBLOCK: " + std::string(strerror(errno)));
+            // Wrap system errno in our NetworkError
+            throw NetworkError(errno, "Failed to set O_NONBLOCK");
         }
 
         successfully_connected = true;
@@ -219,7 +229,7 @@ ssize_t Connection::read(void *buf, size_t len) {
         } 
 
         // Any other SSL error
-        throw SSLException("SSL_read failed: " + get_openssl_error());
+        throw ConnectionException("SSL_read failed: " + get_openssl_error());
 
     } else {
         n = recv(sockfd, buf, len, 0);
@@ -237,7 +247,8 @@ ssize_t Connection::read(void *buf, size_t len) {
             return 0; // No data yet
         }
 
-        throw ConnectionException("recv failed: " + std::string(strerror(errno)));
+        // Properly mapped to our unified NetworkError wrap
+        throw NetworkError(errno, "recv failed");
     }
 }
 
@@ -251,12 +262,13 @@ ssize_t Connection::write(const void *buf, size_t len) {
         int err = SSL_get_error(ssl, n);
         if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) return 0;
         
-        throw SSLException("SSL_write failed: " + get_openssl_error());
+        throw ConnectionException("SSL_write failed: " + get_openssl_error());
     } else {
         ssize_t n = send(sockfd, buf, len, 0);
         if (n == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-            throw ConnectionException("send failed: " + std::string(strerror(errno)));
+            // Properly mapped to our unified NetworkError wrap
+            throw NetworkError(errno, "send failed");
         }
         return n;
     }

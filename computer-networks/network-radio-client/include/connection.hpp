@@ -12,7 +12,6 @@
 #include <stdexcept>
 
 
-
 /**
  * States used by the Connection state machine.
  */

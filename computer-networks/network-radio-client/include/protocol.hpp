@@ -11,15 +11,14 @@ struct HttpResponse {
     bool is_chunked = false;
 };
 
-void init_http_response(HttpResponse *resp);
+void init_http_response(HttpResponse& resp);
 
-int create_http_request(char *request,
-                      const std::string host,
-                      const std::string path,
-                      bool request_meta,
-                      const std::string cookie);
+size_t create_http_request(char *request,
+                           const std::string& host,
+                           const std::string& path,
+                           bool request_meta,
+                           const std::string& cookie);
 
-bool parse_http_response_line(const char* line,
-                         int bytes,
-                         int line_count,
-                         HttpResponse *resp);
+void parse_http_response_line(const std::string &line,
+                              int line_count,
+                              HttpResponse &resp);

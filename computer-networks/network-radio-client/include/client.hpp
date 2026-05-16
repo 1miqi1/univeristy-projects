@@ -26,8 +26,9 @@ struct SendingData {
 };
 
 struct HttpParsingData {
-    char* current_line;
+    int current_line = 0;
     HttpResponse response;
+    std::string input_buffer;
 };
 
 enum class StreamState {
@@ -39,12 +40,13 @@ enum class StreamState {
 struct AudioStreamData {
     long long icy_metaint = 0;
     long long bytes_until_metadata = 0;
-    long long bytes_to_process = 0;
+    std::string meta_buffer;
     
     // State machine additions
     StreamState state = StreamState::READING_AUDIO;
     size_t meta_bytes_remaining = 0; 
-    std::string metadata_buffer; 
+    size_t bytes_to_process = 0;
+    char audio_data_buffer[MAX_BUFFER_SIZE];
 };
 
 struct Redirecting {
@@ -90,25 +92,26 @@ private:
     std::string host;
     std::string path;
     std::string cookie = {};
-    uint16_t port;
+    std::uint16_t port;
 
     char network_data_buffer[MAX_BUFFER_SIZE];
-    char audio_data_buffer[MAX_BUFFER_SIZE];
 
-    std::string input_buffer = "";
+    std::string user_input_buffer = "";
 
-    std::variant<std::monostate, SendingData, HttpParsingData, AudioStreamData> state_data;
+    AudioStreamData stream_data;
+    std::variant<std::monostate, SendingData, HttpParsingData> state_data;
 
-    ssize_t handle_recv(size_t n);
-
-    ssize_t handle_write(size_t n, size_t start);
 
 
     void handle_sending_audio_data();
 
     void handle_sending_http_data();
 
+    void process_stream_data();
+
     void handle_reading();
 
-    void handle_user_input();
+    void handle_http(HttpResponse& response);
+
+    bool handle_user_input();
 };

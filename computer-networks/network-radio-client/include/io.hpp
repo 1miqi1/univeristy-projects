@@ -2,9 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
-void handle_audio(const uint8_t* data, size_t len);
+void handle_audio(const char* data, size_t len);
 
-void handle_metadata(const uint8_t* data, size_t len);
-
-int read_user_line(char* buffer, size_t size);
+void handle_metadata(std::string& meta);
