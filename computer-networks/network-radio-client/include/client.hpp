@@ -28,6 +28,7 @@ struct SendingData {
 struct HttpParsingData {
     int current_line = 0;
     HttpResponse response;
+    std::string input_buffer;
 };
 
 enum class StreamState {
@@ -39,6 +40,7 @@ enum class StreamState {
 struct AudioStreamData {
     long long icy_metaint = 0;
     long long bytes_until_metadata = 0;
+    std::string meta_buffer;
     
     // State machine additions
     StreamState state = StreamState::READING_AUDIO;
@@ -92,7 +94,6 @@ private:
     std::string cookie = {};
     std::uint16_t port;
 
-    std::string input_buffer = "";
     char network_data_buffer[MAX_BUFFER_SIZE];
 
     std::string user_input_buffer = "";

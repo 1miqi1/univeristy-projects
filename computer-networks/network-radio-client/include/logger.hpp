@@ -6,7 +6,7 @@ enum class LogLevel {
     ERROR = 2,
     WARN  = 3,
     INFO  = 1,
-    DEBUG = 4
+    DEBUG = 0
 };
 
 void log_set_level(int v);

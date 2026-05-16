@@ -60,6 +60,8 @@ void Connection::init_tls() {
     if (!ssl_ctx) {
         throw ConnectionException("SSL_CTX_new failed initializing context: " + get_openssl_error());
     }
+
+    SSL_CTX_set_default_verify_paths(ssl_ctx);  
 }
 
 void Connection::resolve_name(const std::string& scheme, const std::string& host, const std::string& port, int family_pref) {
@@ -137,7 +139,10 @@ void Connection::connect() {
             }
             SSL_set_fd(ssl, sockfd);
 
+            SSL_set_tlsext_host_name(ssl, this->host.c_str());
+            
             int ret = SSL_connect(ssl);
+
             if (ret <= 0) {
                 last_error_msg = "SSL handshake failed to " + std::string(ip_buf) + ": " + get_openssl_error();
                 LOGW("Non-critical Error: %s", last_error_msg.c_str());

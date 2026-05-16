@@ -29,7 +29,8 @@ void RadioClient::handle_sending_http_data() {
             this->state = RadioState::REACIVING_HTTP; 
             HttpResponse response;
             init_http_response(response);
-            this->state_data = HttpParsingData({0, response});
+            this->state_data = HttpParsingData({0, response, ""});
+
         }
     }
 }
@@ -44,13 +45,12 @@ void RadioClient::handle_reading() {
         auto* http_data = std::get_if<HttpParsingData>(&state_data);
         if (!http_data) return; 
         
-        input_buffer.append(network_data_buffer, bytes_read);
-        static int line_count = 0; 
+        http_data->input_buffer.append(network_data_buffer, bytes_read);
         size_t pos;
 
-        while ((pos = input_buffer.find("\r\n")) != std::string::npos) {
-            std::string line = input_buffer.substr(0, pos);
-            input_buffer.erase(0, pos + 2); 
+        while ((pos =  http_data->input_buffer.find("\r\n")) != std::string::npos) {
+            std::string line =  http_data->input_buffer.substr(0, pos);
+            http_data->input_buffer.erase(0, pos + 2); 
             
             // Log incoming HTTP response lines
             LOGI("%s", line.c_str());
@@ -59,16 +59,27 @@ void RadioClient::handle_reading() {
                 HttpResponse response = http_data->response;
                 handle_http(response);
                 if(state == RadioState::STREAMING_AUDIO){
-                    size_t leftover_bytes = input_buffer.size();
-                    memcpy(stream_data.audio_data_buffer, input_buffer.data(), leftover_bytes);
-                    stream_data.bytes_to_process = leftover_bytes;
-                    process_stream_data();
+                    size_t leftover_bytes =  http_data->input_buffer.size();
+                    size_t offset = 0;
+                    
+                    // Feed the leftover bytes in safe chunks so we don't overflow the buffer!
+                    while (offset < leftover_bytes) {
+                        // Assuming audio_data_buffer is sized to MAX_BUFFER_SIZE
+                        size_t chunk = std::min(leftover_bytes - offset, (size_t)MAX_BUFFER_SIZE);
+                        
+                        memcpy(stream_data.audio_data_buffer,  http_data->input_buffer.data() + offset, chunk);
+                        stream_data.bytes_to_process = chunk;
+                        
+                        process_stream_data();
+                        
+                        offset += chunk;
+                    }
                 }
-                input_buffer.clear();
+                http_data->input_buffer.clear();
                 return;
             }
-            parse_http_response_line(line, line.length(), line_count, http_data->response);
-            line_count++;
+            parse_http_response_line(line, http_data->current_line, http_data->response);
+            http_data->current_line++;
         }
     } 
     // Handle Audio and ICY Metadata Parsing
@@ -148,7 +159,7 @@ bool RadioClient::handle_user_input() {
                 return true;
             }
         }
-        if(input_buffer.size() > 4){
+        if(user_input_buffer.size() > 4){
             user_input_buffer = "";
         }
     }
@@ -217,11 +228,17 @@ void RadioClient::process_stream_data() {
 
             case StreamState::READING_META_PAYLOAD: {
                 size_t meta_chunk = std::min(stream_data.meta_bytes_remaining, available);
-                handle_metadata(stream_data.audio_data_buffer + offset, meta_chunk);
+                stream_data.meta_buffer.append(
+                    reinterpret_cast<const char*>(stream_data.audio_data_buffer + offset), 
+                    meta_chunk
+                );
                 
                 stream_data.meta_bytes_remaining -= meta_chunk;
+                offset += meta_chunk;
 
                 if (stream_data.meta_bytes_remaining == 0) {
+                    handle_metadata(stream_data.meta_buffer);
+                    stream_data.meta_buffer.clear();
                     stream_data.state = StreamState::READING_AUDIO;
                     stream_data.bytes_until_metadata = stream_data.icy_metaint;
                 }
@@ -259,7 +276,6 @@ void RadioClient::run() {
                 LOGI(""); // Add one extra newline spacer manually to match the layout
                 
                 this->state_data = SendingData{0, message_len};
-                input_buffer = "";
                 pfds[1].fd = this->connection.get_sockfd();
             }
 

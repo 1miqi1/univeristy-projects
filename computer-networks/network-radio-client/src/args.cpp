@@ -1,9 +1,11 @@
 #include "args.hpp"
+#include "logger.hpp"
 
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <string>
 #include <cstdint>
 #include <stdexcept> // Added for std::invalid_argument
@@ -52,6 +54,31 @@ std::string take_value(int &i, int argc, char **argv) {
 
 }
 
+void print_options(const Options &opt) {
+    std::fprintf(stderr, "=== OPTIONS DUMP ===\n");
+
+    std::fprintf(stderr, "url        : %s\n", opt.url.c_str());
+    std::fprintf(stderr, "scheme     : %s\n", opt.scheme.c_str());
+    std::fprintf(stderr, "host       : %s\n", opt.host.c_str());
+    std::fprintf(stderr, "path       : %s\n", opt.path.c_str());
+    std::fprintf(stderr, "port       : %u\n", opt.port);
+
+    std::fprintf(stderr, "multiplex  : %s\n",
+                 opt.multiplex ? "true" : "false");
+
+    std::fprintf(stderr, "timeout_ms : %d\n", opt.timeout_ms);
+
+    std::fprintf(stderr, "force_ipv4 : %s\n",
+                 opt.force_ipv4 ? "true" : "false");
+
+    std::fprintf(stderr, "force_ipv6 : %s\n",
+                 opt.force_ipv6 ? "true" : "false");
+
+    std::fprintf(stderr, "verbosity  : %d\n", opt.verbosity);
+
+    std::fprintf(stderr, "====================\n");
+}
+
 // Throws if the URL is malformed or missing a host
 void parse_url(const std::string& url,
                std::string& scheme,
@@ -67,10 +94,18 @@ void parse_url(const std::string& url,
 
     const auto u = *result;
     scheme = std::string(u.scheme());
-    host   = std::string(u.host());
-    path   = std::string(u.path());
+    host   = std::string(u.encoded_host()); 
 
+    // ==========================================
+    // THE FIX: Capture both path AND query string
+    // ==========================================
+    path = std::string(u.encoded_path());
     if (path.empty()) path = "/";
+
+    if (u.has_query()) {
+        path += "?" + std::string(u.encoded_query());
+    }
+    // ==========================================
 
     if (u.has_port()) {
         int p = 0;
