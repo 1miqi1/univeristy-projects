@@ -15,7 +15,7 @@ int main(int argc, char **argv){
                     "Usage: my_tool -u <url> [-t timeout] [-v verbosity] [-m46q]\n");
         std::exit(1);
     }
-    print_options(opt);
+    log_set_level(opt.verbosity);
     if(opt.verbosity == (int)LogLevel ::DEBUG){
         print_options(opt);
     }

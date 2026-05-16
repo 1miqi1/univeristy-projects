@@ -74,7 +74,7 @@ void Connection::resolve_name(const std::string& scheme, const std::string& host
 
     this->use_tls = scheme == "https";
 
-    LOGD("\n%s", get_timestamp().c_str());
+    LOGI("%s", get_timestamp().c_str());
 
     struct addrinfo hints;
     struct addrinfo *result;
@@ -92,6 +92,10 @@ void Connection::resolve_name(const std::string& scheme, const std::string& host
         throw ConnectionException("getaddrinfo failed for " + host + ": " + std::string(gai_strerror(s)));
     }
 
+    if (this->family_pref == AF_UNSPEC && result != nullptr) {
+        this->family_pref = result->ai_family;
+    }
+
     this->list_of_connections = result;
     this->current_connection = result;
 }
@@ -105,27 +109,51 @@ void Connection::connect() {
     bool successfully_connected = false;
     std::string last_error_msg = "Unknown error";
 
-    for (struct addrinfo *p = this->list_of_connections; p != nullptr; p = p->ai_next) {
-        char ip_buf[INET6_ADDRSTRLEN];
-        getnameinfo(p->ai_addr, p->ai_addrlen, ip_buf, sizeof(ip_buf), nullptr, 0, NI_NUMERICHOST);
+    struct addrinfo *p;
+
+    // Iterujemy po liście, ale próbujemy połączyć się TYLKO z wybraną rodziną IP
+    for (p = this->list_of_connections; p != nullptr; p = p->ai_next) {
         
-        LOGI("Attempting connection to %s...", ip_buf);
+        // Pomiń adresy, które mają inną wersję IP niż pierwszy adres na liście
+        if (p->ai_family != family_pref) {
+            continue;
+        }
+
+        char ip_buf[INET6_ADDRSTRLEN];
+        char service[NI_MAXSERV];
+
+        int rc = getnameinfo(
+            p->ai_addr,
+            p->ai_addrlen,
+            ip_buf,
+            sizeof(ip_buf),
+            service,
+            sizeof(service),
+            NI_NUMERICHOST | NI_NUMERICSERV
+        );
+
+        if (rc != 0) {
+            LOGW("getnameinfo failed: %s", gai_strerror(rc));
+            continue;
+        }
+
+        LOGI("attempting to connect to server [%s]:%s", ip_buf, service);
 
         // 1. Create Socket
         sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
         if (sockfd == -1) {
             last_error_msg = std::string("socket() failed: ") + strerror(errno);
             LOGW("Non-critical Error: %s", last_error_msg.c_str());
-            continue; // Try next address
+            continue;
         }
 
         // 2. Perform Blocking Connect
         if (::connect(sockfd, p->ai_addr, p->ai_addrlen) != 0) {
-            last_error_msg = std::string("connect() failed to ") + ip_buf + ": " + strerror(errno);
+            last_error_msg = std::string("connect() failed to ") + "[" + ip_buf + "]" + ":" + service + " : " + strerror(errno);
             LOGW("Non-critical Error: %s", last_error_msg.c_str());
             close(sockfd);
             sockfd = -1;
-            continue; // Try next address
+            continue;
         }
 
         // 3. Perform Blocking TLS Handshake
@@ -133,9 +161,10 @@ void Connection::connect() {
             if (!ssl_ctx) init_tls();
             ssl = SSL_new(ssl_ctx);
             if (!ssl) {
+                last_error_msg = "SSL_new failed: " + get_openssl_error();
                 close(sockfd);
                 sockfd = -1;
-                throw ConnectionException("SSL_new failed: " + get_openssl_error());
+                continue;
             }
             SSL_set_fd(ssl, sockfd);
 
@@ -144,33 +173,25 @@ void Connection::connect() {
             int ret = SSL_connect(ssl);
 
             if (ret <= 0) {
-                last_error_msg = "SSL handshake failed to " + std::string(ip_buf) + ": " + get_openssl_error();
+                last_error_msg = "SSL handshake failed to [" + std::string(ip_buf) + "]:" + std::string(service) + ": " + get_openssl_error();
                 LOGW("Non-critical Error: %s", last_error_msg.c_str());
                 SSL_free(ssl);
                 ssl = nullptr;
                 close(sockfd);
                 sockfd = -1;
-                continue; // Try next address
+                continue;
             }
-            LOGI("TLS handshake completed successfully");
+            LOGD("TLS handshake completed successfully");
         }
 
-        // 4. IMPORTANT: Switch to NON-BLOCKING for the poll loop
-        int flags = fcntl(sockfd, F_GETFL, 0);
-        if (flags == -1 || fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1) {
-            close_connection();
-            // Wrap system errno in our NetworkError
-            throw NetworkError(errno, "Failed to set O_NONBLOCK");
-        }
-
+        // Udało się połączyć!
         successfully_connected = true;
-        this->current_connection = p; // Save the successful connection
-        LOGI("Successfully connected to %s", ip_buf);
-        break; // Connection successful, exit the loop
+        this->current_connection = p;
+        break; 
     }
 
     if (!successfully_connected) {
-        throw ConnectionException("Could not establish connection to " + host + ". Last error: " + last_error_msg);
+        throw ConnectionException("Could not establish connection to " + this->host + ". Last error: " + last_error_msg);
     }
 
     this->state = ConnectionState::CONNECTED;
