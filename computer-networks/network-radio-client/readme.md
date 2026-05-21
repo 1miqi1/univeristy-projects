@@ -4,6 +4,13 @@ Todo dopytac to co oznacza sensowen:
 - klient nie podal calej wiaodmosci http, czekamy, czy nie?
 
 Todo:
--print client message
-- change to chars isnetad of strings
-- style
+- encoding - chunked
+
+Done:
+- 1 DONE
+- 2 DONE
+- 3
+- 4
+- 5 DONE
+- 6 DONE
+- 7 DONE

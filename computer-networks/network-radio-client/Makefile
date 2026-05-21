@@ -1,6 +1,5 @@
 CXX = g++
 CXXFLAGS = -Wall -Wextra -O2 -std=c++17 -Iinclude -fPIC
-# Add the external libraries here
 LDLIBS = -lssl -lcrypto -lboost_url
 
 TARGET = sikradio
@@ -11,7 +10,7 @@ SRC = \
     src/args.cpp \
     src/client.cpp \
     src/connection.cpp \
-    src/protocol.cpp \
+    src/http.cpp \
     src/logger.cpp \
     src/io.cpp
 
@@ -29,14 +28,12 @@ all: $(TARGET) $(LIB)
 # EXECUTABLE
 # ======================
 $(TARGET): $(OBJ)
-	# Added $(LDLIBS) to the very end of this line
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
 # ======================
-# SHARED LIB (ONLY args.cpp here, adjust if needed)
+# SHARED LIB (ONLY args.cpp here)
 # ======================
 $(LIB): $(OBJ_DIR)/src/args.o
-	# If your shared library also relies on boost_url, you need it here too!
 	$(CXX) -shared -o $@ $^ -lboost_url
 
 # ======================
@@ -52,4 +49,23 @@ $(OBJ_DIR)/%.o: %.cpp
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET) $(LIB)
 
-.PHONY: all clean
+# ======================
+# DEBUG BUILD
+# ======================
+debug: CXXFLAGS += -g -O0
+debug: clean all
+
+# ======================
+# ASAN BUILD
+# ======================
+asan: CXXFLAGS += -g -O1 -fsanitize=address
+asan: LDLIBS +=
+asan: clean all
+
+# ======================
+# RUN WITH VALGRIND
+# ======================
+valgrind: $(TARGET)
+	valgrind --leak-check=full --track-origins=yes ./$(TARGET)
+
+.PHONY: all clean debug asan valgrind
