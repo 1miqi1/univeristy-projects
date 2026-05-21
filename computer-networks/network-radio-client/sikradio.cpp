@@ -1,5 +1,5 @@
 #include<iostream>
-#include "protocol.hpp"
+#include "http.hpp"
 #include "args.hpp"
 #include "client.hpp"
 #include "logger.hpp"
@@ -28,7 +28,7 @@ int main(int argc, char **argv){
     }
 
 
-    RadioClient r(opt.multiplex, opt.timeout_ms, family_pref, opt.scheme, opt.host, opt.path, opt.port);
+    RadioClient r(opt.multiplex, opt.timeout_ms, family_pref, opt.scheme, opt.host, opt.path, opt.port, opt.url);
     r.run();
 
     return 0;

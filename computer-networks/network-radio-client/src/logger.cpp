@@ -6,28 +6,20 @@
 #include <cerrno>
 #include <cstring>
 
-static int g_level = 2;
+static int g_level = 2; // Default to ERROR level
 
 void log_set_level(int v) {
     g_level = v;
 }
 
-
 void log_msg(LogLevel lvl, const char *fmt, ...) {
-    if ((int)lvl > g_level) return;
+    if (static_cast<int>(lvl) > g_level) return;
 
     switch (lvl) {
-        case LogLevel::DEBUG:
-            std::fprintf(stderr, "[DEBUG]: ");
-            break;
-        case LogLevel::WARN:
-            std::fprintf(stderr, "[WARN ]: ");
-            break;
-        case LogLevel::ERROR:
-            std::fprintf(stderr, "[ERROR]: ");
-            break;
-        default:
-            break;
+        case LogLevel::DEBUG: std::fprintf(stderr, "[DEBUG]: "); break;
+        case LogLevel::WARN:  std::fprintf(stderr, "[WARN ]: "); break;
+        case LogLevel::ERROR: std::fprintf(stderr, "[ERROR]: "); break;
+        default: break;
     }
 
     va_list ap;
