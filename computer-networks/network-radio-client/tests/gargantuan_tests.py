@@ -702,7 +702,7 @@ class TestResponseParsing(SikradioTestBase):
         srv = MockServer(handler)
         srv.start()
         try:
-            stdout, _, rc = run_sikradio(["-u", srv.url("/"), "-q"], timeout=5)
+            stdout, _, rc = run_sikradio(["-u", srv.url("/")], timeout=5)
             self.assertExitOk(rc)
             self.assertEqual(stdout, audio)
         finally:
@@ -773,27 +773,47 @@ class TestResponseParsing(SikradioTestBase):
 
         def handler(conn, addr, srv):
             req = recv_until(conn)
-            if b"GET /a" in req and b"/ab" not in req:
+
+            if req.startswith(b"GET /a "):
                 conn.sendall(build_http_response(
                     "HTTP/1.1 302 Found",
-                    {"Location": f"http://127.0.0.1:{srv.port}/ab",
-                     "Connection": "close"}, b""))
-            elif b"GET /ab" in req:
+                    {
+                        "Location": f"http://127.0.0.1:{srv.port}/ab",
+                        "Connection": "close"
+                    },
+                    b""
+                ))
+
+            elif req.startswith(b"GET /ab "):
                 conn.sendall(build_http_response(
                     "HTTP/1.1 302 Found",
-                    {"Location": f"http://127.0.0.1:{srv.port}/abc",
-                     "Connection": "close"}, b""))
-            elif b"GET /abc" in req:
+                    {
+                        "Location": f"http://127.0.0.1:{srv.port}/abc",
+                        "Connection": "close"
+                    },
+                    b""
+                ))
+
+            elif req.startswith(b"GET /abc "):
                 conn.sendall(build_http_response(
                     "HTTP/1.1 200 OK",
-                    {"content-type": "audio/mpeg"}, audio))
+                    {"content-type": "audio/mpeg"},
+                    audio
+                ))
+
             conn.shutdown(socket.SHUT_WR)
 
         srv = MockServer(handler)
         srv.start()
         try:
-            stdout, _, rc = run_sikradio(
-                ["-u", srv.url("/a"), "-q"], timeout=8)
+            stdout, stderr, rc = run_sikradio(
+                ["-u", srv.url("/a"),"-v", "4"], timeout=8)
+            
+            # 2. Print the logs to the console
+            print("\n--- PROGRAM STDERR ---")
+            print(stderr.decode('utf-8', errors='replace'))
+            print("----------------------\n")
+            
             self.assertExitOk(rc)
             self.assertEqual(stdout, audio)
         finally:
@@ -1780,8 +1800,8 @@ class TestEdgeCases(SikradioTestBase):
         srv = MockServer(handler)
         srv.start()
         try:
-            stdout, _, rc = run_sikradio(
-                ["-u", srv.url("/"), "-q"], timeout=5)
+            stdout, _, strc = run_sikradio(
+                ["-u", srv.url("/"), "-v", "4"], timeout=5)
             self.assertExitOk(rc)
             self.assertEqual(stdout, b"")
         finally:
@@ -1795,8 +1815,14 @@ class TestEdgeCases(SikradioTestBase):
         srv = MockServer(handler)
         srv.start()
         try:
-            _, _, rc = run_sikradio(
-                ["-u", srv.url("/"), "-q"], timeout=5)
+            stdout, stderr, rc = run_sikradio(
+                ["-u", srv.url("/"), "-v", "4"], timeout=5)
+
+            print("\n--- PROGRAM STDERR ---")
+            print(stderr.decode("utf-8", errors="replace"))
+            print("----------------------\n")
+
+            
             self.assertExitError(rc)
         finally:
             srv.stop()
@@ -2102,8 +2128,12 @@ class TestProtocolEdgeCases(SikradioTestBase):
         srv = MockServer(handler)
         srv.start()
         try:
-            stdout, _, rc = run_sikradio(
-                ["-u", srv.url("/"), "-q"], timeout=5)
+            stdout, stderr, rc = run_sikradio(
+                ["-u", srv.url("/"), "-v", "4"], timeout=5)
+            print("\n--- PROGRAM STDERR ---")
+            print(stderr.decode("utf-8", errors="replace"))
+            print("----------------------\n")
+
             # Per spec: "Jeśli serwer zamknął połączenie, klient wypisuje
             # wszystkie dotychczas odebrane dane i kończy się statusem 0."
             self.assertExitOk(rc)

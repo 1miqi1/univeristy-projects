@@ -40,6 +40,38 @@ static bool iequals_prefix(const std::string &line, std::string_view prefix) {
 
 } // anonymous namespace
 
+
+void validate_http_response(const HttpResponse& resp) {
+    // 1. Status code must be valid HTTP range
+    if (resp.status_code < 100 || resp.status_code > 599) {
+        throw ProtocolError("Invalid or unsupported protocol header");
+    }
+
+    // 2. Redirects must include Location
+    if (resp.status_code >= 300 && resp.status_code < 400) {
+        if (resp.location.empty()) {
+            throw ProtocolError("Invalid or unsupported protocol header");
+        }
+    }
+
+    // 3. ICY metadata must be valid
+    if (resp.icy_metaint < 0) {
+        throw ProtocolError("Invalid or unsupported protocol header");
+    }
+
+    // 4. Chunked + ICY should not both be active
+    if (resp.is_chunked && resp.icy_metaint > 0) {
+        throw ProtocolError("Invalid or unsupported protocol header");
+    }
+
+    // 5. Validate Set-Cookie headers (basic sanity)
+    for (const auto& cookie : resp.set_cookies) {
+        if (cookie.empty() || cookie.find('=') == std::string::npos) {
+            throw ProtocolError("Invalid or unsupported protocol header");
+        }
+    }
+}
+
 void merge_cookie(std::vector<HttpCookie>& client_cookies, const std::string& set_cookie_header, const std::string& current_host) {
     if (set_cookie_header.empty()) return;
 

@@ -29,6 +29,8 @@ struct HttpResponse {
  */
 void init_http_response(HttpResponse& resp);
 
+void validate_http_response(const HttpResponse& resp);
+
 void merge_cookie(std::vector<HttpCookie>& client_cookies, 
                   const std::string& set_cookie_header, 
                   const std::string& current_host);
