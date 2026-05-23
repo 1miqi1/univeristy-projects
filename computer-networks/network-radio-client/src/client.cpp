@@ -340,7 +340,7 @@ void RadioClient::run() {
             int ret = poll(pfds, NUM_POLL_FDS, connection.get_ms_until_timeout(timeout_ms));
 
             if (connection.get_ms_until_timeout(timeout_ms) == 0 ) {
-                LOGI("Data receiving timeout.");
+                LOGI("data receiving timeout.");
                 connection.close_connection();
 
                 state = RadioState::NOT_CONNECTED;

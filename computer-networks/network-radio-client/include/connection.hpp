@@ -118,6 +118,7 @@ public:
      */
     int get_sockfd() const { return sockfd; }
 
+
 private:
     // --- Connection Coordinates ---
     std::string scheme;       ///< Protocol scheme ("http" or "https")
