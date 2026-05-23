@@ -2,13 +2,13 @@
 
 #include <string>
 #include <vector>
+#include <chrono>
+#include <stdexcept>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <unistd.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
-#include <chrono>
-#include <unistd.h>
-#include <stdexcept>
 
 /**
  * @brief States used by the Connection state machine.
@@ -85,7 +85,7 @@ public:
      * @param len Maximum number of bytes to read.
      * @return ssize_t Bytes read, 0 if no data is currently available, throws on error.
      */
-    ssize_t read(void *buf, size_t len);
+    ssize_t read(void* buf, size_t len);
 
     /**
      * @brief Performs a non-blocking write to the connection.
@@ -94,7 +94,7 @@ public:
      * @param len Number of bytes to write.
      * @return ssize_t Bytes written, 0 if socket isn't ready, throws on error.
      */
-    ssize_t write(const void *buf, size_t len);
+    ssize_t write(const void* buf, size_t len);
 
     /**
      * @brief Checks for pending bytes inside the TLS/SSL internal buffers.
@@ -128,23 +128,15 @@ private:
 
     // --- OS Network Socket Members ---
     int sockfd;                           ///< Underlying OS socket file descriptor
-    struct addrinfo *list_of_connections; ///< Linked list of resolved addresses
-    struct addrinfo *current_connection;  ///< Pointer to the currently active address structure
+    struct addrinfo* list_of_connections; ///< Linked list of resolved addresses
+    struct addrinfo* current_connection;  ///< Pointer to the currently active address structure
 
     // --- OpenSSL Context Members ---
-    SSL *ssl;                 ///< Active SSL connection object
-    SSL_CTX *ssl_ctx;         ///< Global SSL context for this connection
+    SSL* ssl;             ///< Active SSL connection object
+    SSL_CTX* ssl_ctx;     ///< Global SSL context for this connection
 
     // --- Internal State Tracking ---
     ConnectionState state;    ///< Current state of the connection lifecycle
     bool ever_connected;      ///< Flag indicating if a connection was ever successfully established
     std::chrono::steady_clock::time_point last_activity; ///< Timestamp of the last read/write operation
-
-    /**
-     * @brief Helper function to format raw IP buffers into human-readable strings.
-     * 
-     * @param ip_buf The raw IP character buffer.
-     * @return std::string The formatted string representation.
-     */
-    std::string get_ip_string(char* ip_buf);
 };

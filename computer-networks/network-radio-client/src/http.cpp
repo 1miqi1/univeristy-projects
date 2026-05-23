@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string>
 #include <algorithm>
+#include <string_view>
 
 namespace {
 
@@ -17,13 +18,10 @@ constexpr std::string_view HEADER_TRANSFER_ENC = "Transfer-Encoding:";
 constexpr std::string_view CHUNKED_ENC_VAL     = "chunked";
 constexpr std::string_view ICY_200_OK_STATUS   = "ICY 200";
 
-
-
-
 /**
- * @brief Helper to compare a string prefix case-insensitively.
+ * @brief Compares a string prefix case-insensitively.
  */
-static bool iequals_prefix(const std::string &line, std::string_view prefix) {
+bool iequals_prefix(const std::string& line, std::string_view prefix) {
     if (line.size() < prefix.size()) return false;
 
     for (size_t i = 0; i < prefix.size(); i++) {
@@ -38,33 +36,49 @@ static bool iequals_prefix(const std::string &line, std::string_view prefix) {
     return true;
 }
 
+/**
+ * @brief Trims leading and trailing whitespace from a string.
+ */
+std::string trim(std::string s) {
+    s.erase(0, s.find_first_not_of(" \t\r\n"));
+    size_t last = s.find_last_not_of(" \t\r\n");
+    if (last != std::string::npos) {
+        s.erase(last + 1);
+    }
+    return s;
+}
+
+/**
+ * @brief Converts a string to lowercase.
+ */
+std::string to_lower(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c += 32;
+    }
+    return s;
+}
+
 } // anonymous namespace
 
-
 void validate_http_response(const HttpResponse& resp) {
-    // 1. Status code must be valid HTTP range
+    // 1. Status code must be within the valid HTTP range
     if (resp.status_code < 100 || resp.status_code > 599) {
         throw ProtocolError("Invalid or unsupported protocol header");
     }
 
-    // 2. Redirects must include Location
+    // 2. Redirects must include a Location header
     if (resp.status_code >= 300 && resp.status_code < 400) {
         if (resp.location.empty()) {
             throw ProtocolError("Invalid or unsupported protocol header");
         }
     }
 
-    // 3. ICY metadata must be valid
+    // 3. ICY metadata interval must be non-negative
     if (resp.icy_metaint < 0) {
         throw ProtocolError("Invalid or unsupported protocol header");
     }
 
-    // 4. Chunked + ICY should not both be active
-    if (resp.is_chunked && resp.icy_metaint > 0) {
-        throw ProtocolError("Invalid or unsupported protocol header");
-    }
-
-    // 5. Validate Set-Cookie headers (basic sanity)
+    // 4. Perform basic sanity validation on Set-Cookie headers
     for (const auto& cookie : resp.set_cookies) {
         if (cookie.empty() || cookie.find('=') == std::string::npos) {
             throw ProtocolError("Invalid or unsupported protocol header");
@@ -72,24 +86,11 @@ void validate_http_response(const HttpResponse& resp) {
     }
 }
 
-void merge_cookie(std::vector<HttpCookie>& client_cookies, const std::string& set_cookie_header, const std::string& current_host) {
+void merge_cookie(std::vector<HttpCookie>& client_cookies, 
+                  const std::string& set_cookie_header, 
+                  const std::string& current_host) 
+{
     if (set_cookie_header.empty()) return;
-
-    // Helper to trim whitespace from ends of strings
-    auto trim = [](std::string s) {
-        s.erase(0, s.find_first_not_of(" \t\r\n"));
-        size_t last = s.find_last_not_of(" \t\r\n");
-        if (last != std::string::npos) s.erase(last + 1);
-        return s;
-    };
-
-    // Helper to convert to lowercase for case-insensitive attribute checking
-    auto to_lower = [](std::string s) {
-        for (char &c : s) {
-            if (c >= 'A' && c <= 'Z') c += 32;
-        }
-        return s;
-    };
 
     // 1. Extract the primary key=value pair (before the first ';')
     size_t semi_pos = set_cookie_header.find(';');
@@ -101,7 +102,7 @@ void merge_cookie(std::vector<HttpCookie>& client_cookies, const std::string& se
     std::string new_key = trim(kv_part.substr(0, eq_pos));
     std::string new_value = trim(kv_part.substr(eq_pos + 1));
 
-    // Default domain and path
+    // Default domain and path fallbacks
     std::string cookie_domain = current_host; 
     std::string cookie_path = "/";
 
@@ -143,7 +144,7 @@ void merge_cookie(std::vector<HttpCookie>& client_cookies, const std::string& se
         }
     }
 
-    // 3. Update if exists for this domain and path, otherwise append
+    // 3. Update if the cookie exists for this domain and path, otherwise append.
     // Note: HTTP cookies are uniquely identified by their Name, Domain, AND Path.
     bool found = false;
     for (auto& cookie : client_cookies) {
@@ -163,18 +164,16 @@ void init_http_response(HttpResponse& resp) {
     resp.status_code = 0;
     resp.location.clear();
     resp.icy_metaint = 0;
-    resp.is_chunked = false;
     resp.set_cookies.clear();
 }
 
-size_t create_http_request(char *request,
+size_t create_http_request(char* request,
                            const std::string& host,
                            const std::string& path,
                            bool request_meta,
                            const std::vector<HttpCookie>& client_cookies) 
 {
     // Note: Assuming `request` points to a sufficiently large buffer. 
-    // In modern C++, consider passing a buffer limit and using `snprintf`.
     int written = sprintf(request,
         "GET %s HTTP/1.1\r\n"
         "Host: %s\r\n"
@@ -187,14 +186,14 @@ size_t create_http_request(char *request,
         ptr += sprintf(ptr, "Icy-MetaData: 1\r\n");
     }
 
-    // Filter and build the Cookie header
+    // Filter and build the Cookie header string
     std::string cookie_header_val;
     for (const auto& cookie : client_cookies) {
         // Basic domain matching: check if the target host ends with the cookie's domain
         // (e.g., host "stream.radio.com" matches cookie domain "radio.com")
         if (host.length() >= cookie.domain.length() && 
-            host.compare(host.length() - cookie.domain.length(), cookie.domain.length(), cookie.domain) == 0) {
-            
+            host.compare(host.length() - cookie.domain.length(), cookie.domain.length(), cookie.domain) == 0) 
+        {
             if (!cookie_header_val.empty()) {
                 cookie_header_val += "; ";
             }
@@ -211,9 +210,9 @@ size_t create_http_request(char *request,
     return static_cast<size_t>(ptr - request);
 }
 
-void parse_http_response_line(const std::string &line,
+void parse_http_response_line(const std::string& line,
                               int line_count,
-                              HttpResponse &resp) 
+                              HttpResponse& resp) 
 {
     if (line_count == 0) {
         int code = 0;
@@ -231,44 +230,36 @@ void parse_http_response_line(const std::string &line,
         throw ProtocolError("Invalid or unsupported protocol header");
     }
 
-    auto trim_left = [](const std::string &s, size_t pos) {
+    auto trim_left = [](const std::string& s, size_t pos) {
         while (pos < s.size() && s[pos] == ' ') {
             pos++;
         }
         return pos;
     };
 
-    const std::string &l = line;
-
-    if (iequals_prefix(l, HEADER_LOCATION)) {
-        size_t pos = trim_left(l, HEADER_LOCATION.size());
-        resp.location = l.substr(pos);
+    if (iequals_prefix(line, HEADER_LOCATION)) {
+        size_t pos = trim_left(line, HEADER_LOCATION.size());
+        resp.location = line.substr(pos);
         return;
     }
 
-    if (iequals_prefix(l, HEADER_SET_COOKIE)) {
-        size_t pos = trim_left(l, HEADER_SET_COOKIE.size());
+    if (iequals_prefix(line, HEADER_SET_COOKIE)) {
+        size_t pos = trim_left(line, HEADER_SET_COOKIE.size());
         
         // Push the entire raw cookie string into the vector so that 
         // the client can parse the `Domain=` and `Path=` attributes later.
-        resp.set_cookies.push_back(l.substr(pos));
+        resp.set_cookies.push_back(line.substr(pos));
         return;
     }
 
-    if (iequals_prefix(l, HEADER_ICY_METAINT)) {
-        size_t pos = trim_left(l, HEADER_ICY_METAINT.size());
+    if (iequals_prefix(line, HEADER_ICY_METAINT)) {
+        size_t pos = trim_left(line, HEADER_ICY_METAINT.size());
         try {
-            resp.icy_metaint = std::stoi(l.substr(pos));
+            resp.icy_metaint = std::stoi(line.substr(pos));
         } catch (...) {
             throw ProtocolError("Invalid icy-metaint value");
         }
         return;
     }
 
-    if (iequals_prefix(l, HEADER_TRANSFER_ENC)) {
-        if (l.find(CHUNKED_ENC_VAL.data()) != std::string::npos) {
-            resp.is_chunked = true;
-        }
-        return;
-    }
 }

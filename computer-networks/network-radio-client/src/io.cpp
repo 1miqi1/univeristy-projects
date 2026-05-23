@@ -21,10 +21,8 @@ void handle_audio(const char* data, size_t len) {
             bytes_written += static_cast<size_t>(result);
         } else if (result < 0) {
             if (errno == EINTR) {
-                // Interrupted by a signal, safe to retry
                 continue;
             }
-            // The stream was destroyed (EPIPE) or another fatal error occurred
             throw std::runtime_error("cant print data"); 
         }
     }
