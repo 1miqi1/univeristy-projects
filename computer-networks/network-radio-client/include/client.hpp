@@ -9,6 +9,9 @@
 #include <vector>
 #include <cstdint>
 
+/**
+ * @brief Maximum size for internal buffers used for network and user input I/O.
+ */
 constexpr size_t MAX_BUFFER_SIZE = 65536;
 
 /**
@@ -67,19 +70,18 @@ struct AudioStreamData {
  * @brief Helper structure containing parsed redirect coordinates.
  */
 struct Redirecting {
-    std::string scheme;
-    std::string host;
-    std::string path;
-    std::string cookie;
+    std::string scheme;     ///< Protocol scheme for the redirect ("http" or "https")
+    std::string host;       ///< Target server hostname or IP address for the redirect
+    std::string path;       ///< URL path and query string for the redirect
+    std::string cookie;     ///< Session cookie to pass along with the redirect request
 };
-
 
 /**
  * @brief Helper structure user input 
  */
 struct UserInput {
-    char user_input_buffer[MAX_BUFFER_SIZE];
-    size_t buffer_size = 0;
+    char user_input_buffer[MAX_BUFFER_SIZE]; ///< Buffer to store raw characters read from standard input
+    size_t buffer_size = 0;                  ///< Current number of valid bytes in the user input buffer
 };
 
 /**
@@ -97,6 +99,7 @@ public:
      * @param host        The target hostname or IP address of the radio server.
      * @param path        The URL path including query parameters (e.g., "/stream").
      * @param port        The network port to connect to (e.g., 80, 443, 8000).
+     * @param url         The original full URL string provided for the connection.
      */
     RadioClient(bool multiplex,
             int timeout_ms,
@@ -125,7 +128,7 @@ public:
     void run();
 
 private:
-     RadioState state;           ///< The current high-level phase of the client (e.g., SENDING_HTTP, STREAMING_AUDIO)
+    RadioState state;           ///< The current high-level phase of the client (e.g., SENDING_HTTP, STREAMING_AUDIO)
     Connection connection;      ///< The wrapper object managing the underlying TCP/TLS socket connection
     int socket_fd;              ///< Cached file descriptor of the active socket, used primarily for poll()
 
@@ -134,8 +137,6 @@ private:
     int timeout_ms;             ///< Network operation timeout limit in milliseconds
     int family_pref;            ///< Preferred IP address family (e.g., AF_INET for IPv4, AF_UNSPEC for any)
 
-    // --- first url
-
     // --- Target URL Coordinates ---
     std::string scheme;         ///< Protocol scheme ("http" or "https")
     std::string host;           ///< Target server hostname or IP address
@@ -143,12 +144,12 @@ private:
     std::vector<HttpCookie> client_cookies;    ///< session cookie to send with the HTTP request
     std::uint16_t port;         ///< Target network port (e.g., 80, 443, 8000)
 
-     // --- first url
-    std::string url;
+    // --- Source URL ---
+    std::string url;            ///< The original URL string provided to the client for the connection
 
     // --- I/O Buffers ---
     char network_data_buffer[MAX_BUFFER_SIZE]; ///< Primary buffer for raw bytes read from or written to the network
-    UserInput user_input_data;        ///< Buffer accumulating characters typed by the user via stdin
+    UserInput user_input_data;                 ///< Buffer accumulating characters typed by the user via stdin
 
     // --- Streaming & Sub-States ---
     AudioStreamData stream_data; ///< State machine and buffers specifically for demultiplexing audio and ICY metadata

@@ -1,3 +1,4 @@
+
 #include "client.hpp"
 #include "logger.hpp"
 #include "connection.hpp"
@@ -20,7 +21,6 @@
 #include <fcntl.h>
 #include <vector>
 
-
 namespace {
     // Protocol Constants
     constexpr std::string_view CRLF = "\r\n";
@@ -37,7 +37,6 @@ namespace {
     constexpr int POLL_NET_IDX = 1;
     constexpr int NUM_POLL_FDS = 2;
     constexpr int MAX_USER_INPUT = 4096;
-
 }
 
 void RadioClient::handle_sending_http_data() {
@@ -48,8 +47,10 @@ void RadioClient::handle_sending_http_data() {
     
     if (len > 0) {
         info->bytes_sent += static_cast<size_t>(len);
+        LOGD("Sent %zd bytes of HTTP request (%zu/%zu total)", len, info->bytes_sent, info->request_len);
 
         if (info->bytes_sent == info->request_len) {
+            LOGD("Finished sending HTTP request. Transitioning to RECEIVING_HTTP.");
             state = RadioState::RECEIVING_HTTP; 
             
             HttpResponse response;
@@ -60,25 +61,32 @@ void RadioClient::handle_sending_http_data() {
 }
 
 ssize_t RadioClient::handle_reading(size_t len) {
-    // No try-catch here. Allow exceptions to bubble up to run()
-    size_t to_read = len ? MAX_BUFFER_SIZE : len <= MAX_BUFFER_SIZE;
+    size_t to_read = (len > 0) ? std::min(len, MAX_BUFFER_SIZE) : MAX_BUFFER_SIZE;
     ssize_t bytes_read = connection.read(network_data_buffer, to_read);
 
     if (bytes_read <= 0) return bytes_read; 
 
     if (state == RadioState::RECEIVING_HTTP) {
+        LOGD("Read %zd bytes of HTTP response data.", bytes_read);
         auto* http_data = std::get_if<HttpParsingData>(&state_data);
         
         http_data->input_buffer.append(network_data_buffer, bytes_read);
         size_t pos;
 
-        while ((pos = http_data->input_buffer.find(CRLF)) != std::string::npos) {
-            std::string line = http_data->input_buffer.substr(0, pos);
-            http_data->input_buffer.erase(0, pos + CRLF.size()); 
+        // Upgraded to handle both \r\n and just \n
+        while ((pos = http_data->input_buffer.find("\n")) != std::string::npos) {
+            size_t line_len = pos;
+            if (pos > 0 && http_data->input_buffer[pos - 1] == '\r') {
+                line_len--; // Ignore the \r if it exists
+            }
+
+            std::string line = http_data->input_buffer.substr(0, line_len);
+            http_data->input_buffer.erase(0, pos + 1); 
             
-            LOGI("%s", line.c_str());
+            LOGI("%s", line.c_str()); // Keep INFO for printing headers
             
             if (line.empty()) {
+                LOGD("End of HTTP headers detected.");
                 handle_http(http_data->response);
                 return bytes_read;
             }
@@ -88,6 +96,7 @@ ssize_t RadioClient::handle_reading(size_t len) {
         }
     } 
     else if (state == RadioState::STREAMING_AUDIO) {
+        // Omitting LOGD here so we don't flood the terminal 50x a second
         memcpy(stream_data.audio_data_buffer, network_data_buffer, bytes_read);
         stream_data.bytes_to_process = static_cast<size_t>(bytes_read);
         process_stream_data();
@@ -97,9 +106,12 @@ ssize_t RadioClient::handle_reading(size_t len) {
 }
 
 void RadioClient::handle_http(HttpResponse& response) {
+    validate_http_response(response);
+    LOGD("Validating HTTP response. Status Code: %d", response.status_code);
 
     // 1. Success (200 OK)
     if (response.status_code == HTTP_STATUS_OK) {
+        LOGD("HTTP 200 OK. Setting up audio stream. ICY MetaInt: %d", response.icy_metaint);
         state = RadioState::STREAMING_AUDIO;
         stream_data.state = StreamState::READING_AUDIO;
         stream_data.bytes_to_process = 0;
@@ -110,8 +122,12 @@ void RadioClient::handle_http(HttpResponse& response) {
 
         auto* http_data = std::get_if<HttpParsingData>(&state_data);
         size_t leftover_bytes = http_data->input_buffer.size();
-        size_t offset = 0;
+        
+        if (leftover_bytes > 0) {
+            LOGD("Processing %zu leftover bytes from HTTP body as initial audio.", leftover_bytes);
+        }
 
+        size_t offset = 0;
         while (offset < leftover_bytes) {
             size_t chunk = std::min(leftover_bytes - offset, MAX_BUFFER_SIZE);
             memcpy(stream_data.audio_data_buffer, http_data->input_buffer.data() + offset, chunk);
@@ -122,7 +138,6 @@ void RadioClient::handle_http(HttpResponse& response) {
             offset += chunk;
         }
 
-        // Lock in the new state data
         state_data = std::monostate{};
         return;
     }
@@ -135,12 +150,13 @@ void RadioClient::handle_http(HttpResponse& response) {
             return;
         }
 
+        LOGD("HTTP Redirecting to: %s", response.location.c_str());
+
         for (const auto& cookie_header : response.set_cookies) {
             merge_cookie(client_cookies, cookie_header, host);
         }
 
         parse_url(response.location, scheme, host, path, port);
-
         connection.close_connection();
 
         state = RadioState::NOT_CONNECTED;
@@ -161,10 +177,12 @@ int RadioClient::handle_user_input() {
     ssize_t n = read(STDIN_FILENO, user_input_data.user_input_buffer + user_input_data.buffer_size, available_space);
 
     if (n > 0) {
+        LOGD("Read %zd bytes from user input (stdin).", n);
         user_input_data.buffer_size += n; 
 
         std::string_view view(user_input_data.user_input_buffer, user_input_data.buffer_size);
         if (view.find(CMD_QUIT) != std::string_view::npos) {
+            LOGD("Quit command matched. Shutting down.");
             connection.close_connection();
             return 1; // 1 indicates the user wants to quit
         }
@@ -173,13 +191,8 @@ int RadioClient::handle_user_input() {
             char temp[CMD_QUIT.size()];
             size_t start_idx = user_input_data.buffer_size - CMD_QUIT.size();
             
-            for (size_t i = 0; i < CMD_QUIT.size(); ++i) {
-                temp[i] = user_input_data.user_input_buffer[start_idx + i];
-            }
-            
-            for (size_t i = 0; i < CMD_QUIT.size(); ++i) {
-                user_input_data.user_input_buffer[i] = temp[i];
-            }
+            for (size_t i = 0; i < CMD_QUIT.size(); ++i) temp[i] = user_input_data.user_input_buffer[start_idx + i];
+            for (size_t i = 0; i < CMD_QUIT.size(); ++i) user_input_data.user_input_buffer[i] = temp[i];
             
             user_input_data.buffer_size = CMD_QUIT.size();
         }
@@ -197,10 +210,11 @@ int RadioClient::handle_user_input() {
 }
 
 void RadioClient::process_stream_data() {
+    LOGD("processing %zd bytes of HTTP response data.", stream_data.bytes_to_process);
     if (stream_data.bytes_to_process == 0) return;
 
-    // If there is no metadata interval, treat the entire buffer as audio
     if (stream_data.icy_metaint <= 0) {
+        LOGD("Audio %s bytes of HTTP response data.", stream_data.audio_data_buffer);
         handle_audio(stream_data.audio_data_buffer, stream_data.bytes_to_process);
         stream_data.bytes_to_process = 0;
         return;
@@ -208,20 +222,20 @@ void RadioClient::process_stream_data() {
 
     size_t offset = 0;
 
-    // Loop until we have processed all the bytes available in the current buffer
     while (offset < stream_data.bytes_to_process) {
         size_t available = stream_data.bytes_to_process - offset;
 
         switch (stream_data.state) {
             case StreamState::READING_AUDIO: {
+                LOGD("Audio %zd bytes of HTTP response data.", stream_data.bytes_to_process);
                 size_t audio_chunk = std::min(static_cast<size_t>(stream_data.bytes_until_metadata), available);
-                
                 handle_audio(stream_data.audio_data_buffer + offset, audio_chunk);
                 
                 offset += audio_chunk;
                 stream_data.bytes_until_metadata -= audio_chunk;
 
                 if (stream_data.bytes_until_metadata == 0) {
+                    LOGD("Reached end of audio chunk. Awaiting metadata length byte.");
                     stream_data.state = StreamState::READING_META_LENGTH;
                 }
                 break;
@@ -237,6 +251,7 @@ void RadioClient::process_stream_data() {
                     stream_data.state = StreamState::READING_AUDIO;
                     stream_data.bytes_until_metadata = stream_data.icy_metaint;
                 } else {
+                    LOGD("Metadata length byte %d -> payload is %zu bytes.", length_byte, payload_len);
                     stream_data.meta_bytes_remaining = payload_len;
                     stream_data.state = StreamState::READING_META_PAYLOAD;
                 }
@@ -254,15 +269,16 @@ void RadioClient::process_stream_data() {
                 offset += meta_chunk;
 
                 if (stream_data.meta_bytes_remaining == 0) {
-
-                    while (!stream_data.meta_buffer.empty() &&
-                        stream_data.meta_buffer.back() == '\0') {
+                    LOGD("Metadata block fully received. Returning to READING_AUDIO.");
+                    while (!stream_data.meta_buffer.empty() && stream_data.meta_buffer.back() == '\0') {
                         stream_data.meta_buffer.pop_back();
                     }
                     stream_data.meta_buffer.append("\n");
                     stream_data.state = StreamState::READING_AUDIO;
                     stream_data.bytes_until_metadata = stream_data.icy_metaint;
-                    handle_metadata( stream_data.meta_buffer);
+                    
+                    handle_metadata(stream_data.meta_buffer);
+                    stream_data.meta_buffer.clear();
                 }
                 break;
             }
@@ -273,6 +289,7 @@ void RadioClient::process_stream_data() {
 }
 
 void RadioClient::run() {
+    LOGD("Initializing client run loop.");
     int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
     if (flags == -1) {
         LOGW("Getting stdin flags failed: %s", strerror(errno));
@@ -290,13 +307,14 @@ void RadioClient::run() {
         try {
             // 1. Setup / Re-setup Connection
             if (state == RadioState::NOT_CONNECTED) {
+                LOGD("State: NOT_CONNECTED. Resolving host and connecting to: %s:%d", host.c_str(), port);
                 connection.resolve_name(scheme, host, std::to_string(port), family_pref);
                 connection.connect();
                 state = RadioState::SENDING_HTTP;
+                LOGD("Connection established. Formatting HTTP request...");
                 
                 size_t message_len = create_http_request(network_data_buffer, host, path, multiplex, client_cookies);
                 
-                // Log request format nicely
                 std::string req_str(network_data_buffer, message_len);
                 size_t req_pos = 0, next_pos;
                 while ((next_pos = req_str.find(CRLF, req_pos)) != std::string::npos) {
@@ -309,9 +327,10 @@ void RadioClient::run() {
                 pfds[POLL_NET_IDX].fd = connection.get_sockfd();
             }
 
-
             // 2. Poll Configuration
-            pfds[POLL_STDIN_IDX].events = POLLIN;
+            if(pfds[POLL_STDIN_IDX].fd != -1) {
+                pfds[POLL_STDIN_IDX].events = POLLIN;
+            }
             if (state == RadioState::SENDING_HTTP) {
                 pfds[POLL_NET_IDX].events = POLLIN | POLLOUT; 
             } else {
@@ -320,26 +339,15 @@ void RadioClient::run() {
 
             int ret = poll(pfds, NUM_POLL_FDS, connection.get_ms_until_timeout(timeout_ms));
 
-            // check if no bug
-            if (ret == 0 ) {
-                LOGI("data receiving timeout");
+            if (connection.get_ms_until_timeout(timeout_ms) == 0 ) {
+                LOGI("data receiving timeout.");
                 connection.close_connection();
 
-                // 1. FULL session reset
                 state = RadioState::NOT_CONNECTED;
-
-                // 2. Clear cookies (as required)
                 client_cookies.clear();
-
-                // 3. Reset URL back to original (IMPORTANT: re-derive clean state)
-                scheme.clear();
-                host.clear();
-                path.clear();
-                port = 0;
-
+                scheme.clear(); host.clear(); path.clear(); port = 0;
                 parse_url(url, scheme, host, path, port);
 
-                // 4. Reset ALL protocol state
                 state_data = std::monostate{};
                 user_input_data.buffer_size = 0;
             } else if (ret < 0) {
@@ -353,18 +361,34 @@ void RadioClient::run() {
             if (pfds[POLL_STDIN_IDX].fd != -1 && (pfds[POLL_STDIN_IDX].revents & POLLIN)) {
                 int input_status = handle_user_input();
                 if (input_status == 1) {
-                    return; // Quit command
+                    return; 
                 } else if (input_status == -1) {
-                    pfds[POLL_STDIN_IDX].fd = -1; // Stop polling STDIN forever
+                    pfds[POLL_STDIN_IDX].fd = -1; 
                 }
             }
 
             // 4. Network IO
             if (state != RadioState::SHUTDOWN && (pfds[POLL_NET_IDX].revents & (POLLIN | POLLOUT | POLLHUP | POLLERR))) {
                 
-                if (pfds[POLL_NET_IDX].revents & POLLERR) {
-                    LOGE("Network socket error (POLLERR)");
-                    throw ConnectionException("Network socket error (POLLERR)");
+                uint16_t re = pfds[POLL_NET_IDX].revents;
+
+                if (re & POLLERR) {
+                    int err = 0;
+                    socklen_t len = sizeof(err);
+                    getsockopt(connection.get_sockfd(), SOL_SOCKET, SO_ERROR, &err, &len);
+
+                    if(err == ECONNRESET){
+                        LOGD("ECONNRESET detected. Throwing disconnected exception.");
+                        throw ServerDisconnectedException();
+                    } else {
+                        LOGE("Fatal socket error: %s", strerror(err));
+                        throw NetworkError(err, "socket error");
+                    }
+                }
+
+                if (pfds[POLL_NET_IDX].revents & POLLHUP) {
+                    LOGD("POLLHUP detected. Server hung up.");
+                    throw ServerDisconnectedException();
                 }
 
                 if (state == RadioState::SENDING_HTTP && (pfds[POLL_NET_IDX].revents & POLLOUT)) {
@@ -373,12 +397,7 @@ void RadioClient::run() {
                 else if (pfds[POLL_NET_IDX].revents & POLLIN) {
                     handle_reading(MAX_BUFFER_SIZE);
                 }
-
-                if (pfds[POLL_NET_IDX].revents & POLLHUP) {
-                    throw ServerDisconnectedException();
-                }
             }
-
         } 
         catch (const ServerDisconnectedException&) {
             LOGI("Server disconnected gracefully.");
@@ -398,3 +417,4 @@ void RadioClient::run() {
         }
     }
 }
+

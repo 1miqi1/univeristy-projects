@@ -318,7 +318,7 @@ ssize_t Connection::write(const void *buf, size_t len) {
         ssize_t n = send(sockfd, buf, len, MSG_NOSIGNAL);
         if (n == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-            if (errno == ECONNRESET || errno == EPIPE) {
+            if (errno == ECONNRESET) {
                 throw ServerDisconnectedException(); 
             }
             throw NetworkError(errno, "send failed");
