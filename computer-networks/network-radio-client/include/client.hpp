@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <poll.h>
 
 /**
  * @brief Maximum size for internal buffers used for network and user input I/O.
@@ -46,9 +47,9 @@ struct HttpParsingData {
  * @brief Defines the states for the ICY audio/metadata multiplexing stream.
  */
 enum class StreamState {
-    READING_AUDIO,         ///< Currently reading raw audio data
-    READING_META_LENGTH,   ///< Reading the 1-byte metadata length indicator
-    READING_META_PAYLOAD   ///< Reading the actual metadata string payload
+    READING_AUDIO,       ///< Currently reading raw audio data
+    READING_META_LENGTH, ///< Reading the 1-byte metadata length indicator
+    READING_META_PAYLOAD ///< Reading the actual metadata string payload
 };
 
 /**
@@ -77,7 +78,7 @@ struct Redirecting {
 };
 
 /**
- * @brief Helper structure user input 
+ * @brief Helper structure for user input.
  */
 struct UserInput {
     char user_input_buffer[MAX_BUFFER_SIZE]; ///< Buffer to store raw characters read from standard input
@@ -91,24 +92,23 @@ class RadioClient {
 public:
     /**
      * @brief Constructs a new RadioClient.
-     * 
-     * @param multiplex   True to request ICY metadata multiplexed with the audio stream.
-     * @param timeout_ms  Network timeout duration in milliseconds for operations.
-     * @param family_pref IP family preference (e.g., AF_INET for IPv4, AF_INET6 for IPv6, or AF_UNSPEC).
-     * @param scheme      The network protocol scheme (e.g., "http", "https").
-     * @param host        The target hostname or IP address of the radio server.
-     * @param path        The URL path including query parameters (e.g., "/stream").
-     * @param port        The network port to connect to (e.g., 80, 443, 8000).
-     * @param url         The original full URL string provided for the connection.
+     * @param multiplex True to request ICY metadata multiplexed with the audio stream.
+     * @param timeout_ms Network timeout duration in milliseconds.
+     * @param family_pref IP family preference.
+     * @param scheme The network protocol scheme.
+     * @param host The target hostname or IP address.
+     * @param path The URL path including query parameters.
+     * @param port The network port to connect to.
+     * @param url The original full URL string.
      */
     RadioClient(bool multiplex,
-            int timeout_ms,
-            int family_pref,
-            std::string scheme,
-            std::string host,
-            std::string path,
-            uint16_t port,
-            std::string url)
+                int timeout_ms,
+                int family_pref,
+                std::string scheme,
+                std::string host,
+                std::string path,
+                uint16_t port,
+                std::string url)
     : state(RadioState::NOT_CONNECTED),
         connection(),
         socket_fd(-1),
@@ -128,75 +128,106 @@ public:
     void run();
 
 private:
-    RadioState state;           ///< The current high-level phase of the client (e.g., SENDING_HTTP, STREAMING_AUDIO)
-    Connection connection;      ///< The wrapper object managing the underlying TCP/TLS socket connection
-    int socket_fd;              ///< Cached file descriptor of the active socket, used primarily for poll()
+    RadioState state;          ///< Current high-level phase of the client.
+    Connection connection;     ///< Wrapper for TCP/TLS socket connection.
+    int socket_fd;             ///< Cached file descriptor for poll().
 
-    // --- Configuration & Options ---
-    bool multiplex;             ///< If true, requests ICY metadata to be interleaved with the audio stream
-    int timeout_ms;             ///< Network operation timeout limit in milliseconds
-    int family_pref;            ///< Preferred IP address family (e.g., AF_INET for IPv4, AF_UNSPEC for any)
+    // Configuration & Options
+    bool multiplex;            ///< Request ICY metadata interleaving.
+    int timeout_ms;            ///< Network operation timeout in milliseconds.
+    int family_pref;           ///< Preferred IP address family.
 
-    // --- Target URL Coordinates ---
-    std::string scheme;         ///< Protocol scheme ("http" or "https")
-    std::string host;           ///< Target server hostname or IP address
-    std::string path;           ///< URL path and query string (e.g., "/stream")
-    std::vector<HttpCookie> client_cookies;    ///< session cookie to send with the HTTP request
-    std::uint16_t port;         ///< Target network port (e.g., 80, 443, 8000)
+    // Target URL Coordinates
+    std::string scheme;        ///< Protocol scheme ("http" or "https").
+    std::string host;          ///< Target server hostname or IP.
+    std::string path;          ///< URL path and query string.
+    std::vector<HttpCookie> client_cookies; ///< Session cookies for HTTP request.
+    std::uint16_t port;        ///< Target network port.
 
-    // --- Source URL ---
-    std::string url;            ///< The original URL string provided to the client for the connection
+    // Source URL
+    std::string url;           ///< The original URL string provided.
 
-    // --- I/O Buffers ---
-    char network_data_buffer[MAX_BUFFER_SIZE]; ///< Primary buffer for raw bytes read from or written to the network
-    UserInput user_input_data;                 ///< Buffer accumulating characters typed by the user via stdin
+    // I/O Buffers
+    char network_data_buffer[MAX_BUFFER_SIZE]; ///< Primary buffer for network I/O.
+    UserInput user_input_data;                ///< Buffer for stdin characters.
 
-    // --- Streaming & Sub-States ---
-    AudioStreamData stream_data; ///< State machine and buffers specifically for demultiplexing audio and ICY metadata
-    std::variant<std::monostate, SendingData, HttpParsingData> state_data; ///< Data for different states
+    // Streaming & Sub-States
+    AudioStreamData stream_data; ///< State and buffers for ICY stream processing.
+    std::variant<std::monostate, SendingData, HttpParsingData> state_data; ///< Data for specific client states.
 
     /**
-     * @brief Manages the non-blocking transmission of outbound audio data (if applicable).
+     * @brief Manages non-blocking transmission of outbound audio data.
      */
     void handle_sending_audio_data();
 
     /**
-     * @brief Handles the non-blocking transmission of the initial HTTP GET request.
-     *        Transitions the client to the RECEIVING_HTTP state once the entire 
-     *        request has been flushed to the network socket.
+     * @brief Manages non-blocking transmission of the initial HTTP GET request.
      */
     void handle_sending_http_data();
 
     /**
-     * @brief The core stream demultiplexer. 
-     *        Reads from the internal buffer and uses a state machine to separate 
-     *        raw audio bytes from ICY metadata blocks. Dispatches audio to stdout 
-     *        and metadata to stderr.
+     * @brief Parses and demultiplexes raw bytes into audio and metadata.
      */
     void process_stream_data();
 
     /**
-     * @brief Reads raw bytes from the network socket into the internal buffer.
-     *        Routes the received data either to the HTTP header parser (if connecting)
-     *        or to the audio stream processor (if streaming).
-     * @return number of bytes read
+     * @brief Reads bytes from the network socket into the internal buffer.
+     * @param len Maximum bytes to read.
+     * @return Number of bytes read.
      */
     ssize_t handle_reading(size_t len);
 
     /**
-     * @brief Processes a completely parsed HTTP response.
-     *        Handles 200 OK (initiating stream), 3xx Redirects (parsing the new URL 
-     *        and triggering a reconnect), and throws on 4xx/5xx errors.
-     * 
-     * @param response The parsed HTTP response object containing status codes and headers.
+     * @brief Processes a parsed HTTP response (e.g., handles redirects or errors).
+     * @param response The parsed HTTP response object.
      */
     void handle_http(HttpResponse& response);
 
     /**
-     * @brief Non-blocking read and execution of commands from standard input (stdin).
-     *        Currently supports the "quit" command for graceful shutdown.
-     * 
-     * @return true if the client should gracefully shut down; false to continue running.
+     * @brief Reads commands from standard input.
+     * @return 1 to exit, -1 on failure, 0 otherwise.
      */
     int handle_user_input();
+
+    /**
+     * @brief Configures standard input for non-blocking mode.
+     */
+    void init_stdin();
+
+    /**
+     * @brief Triggers connection logic if state is NOT_CONNECTED.
+     */
+    void setup_connection_if_needed(struct pollfd* pfds);
+
+    /**
+     * @brief Executes the poll system call to wait for I/O events.
+     * @return true if successful, false if interrupted by signal.
+     */
+    bool execute_poll(struct pollfd* pfds);
+
+    /**
+     * @brief Processes input from stdin if available.
+     * @return true if exit requested.
+     */
+    bool process_user_input(struct pollfd* pfds);
+
+    /**
+     * @brief Dispatches network events (POLLIN, POLLOUT, etc.) to appropriate handlers.
+     */
+    void process_network_io(struct pollfd* pfds);
+
+    /**
+     * @brief Processes audio data within the stream processing loop.
+     */
+    void process_audio_state(size_t& offset, size_t available);
+
+    /**
+     * @brief Processes the metadata length byte in the stream processing loop.
+     */
+    void process_meta_length_state(size_t& offset);
+
+    /**
+     * @brief Processes metadata payload bytes in the stream processing loop.
+     */
+    void process_meta_payload_state(size_t& offset, size_t available);
 };

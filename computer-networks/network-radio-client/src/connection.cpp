@@ -78,10 +78,13 @@ void Connection::init_tls() {
     SSL_CTX_set_default_verify_paths(ssl_ctx);  
 }
 
-void Connection::resolve_name(const std::string& scheme, const std::string& host, const std::string& port, int family_pref) {
-    close_connection();
+void Connection::resolve_name(const std::string& scheme, std::string& host, const std::string& port, int family_pref) {
+    close_connection(); 
 
     this->scheme = scheme;
+    if (host.size() > 0 && host[0] == '[' && host[host.size() - 1] == ']') {
+        host = host.substr(1, host.size() - 2);
+    }
     this->host = host;
     this->port = port;
     this->family_pref = family_pref;
@@ -112,6 +115,78 @@ void Connection::resolve_name(const std::string& scheme, const std::string& host
     this->current_connection = result;
 }
 
+void Connection::set_socket_non_blocking() {
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    if (flags == -1) {
+        std::string msg = "Getting socket flags failed: " + std::string(strerror(errno));
+        throw NetworkError(errno, msg);
+    }
+
+    if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        std::string msg = "Setting socket to non-blocking failed: " + std::string(strerror(errno));
+        throw NetworkError(errno, msg);
+    }
+}
+
+
+bool Connection::attempt_tls_handshake(struct addrinfo *p, const char* ip_buf, const char* service, std::string& last_error_msg) {
+    if (!ssl_ctx) init_tls();
+    ssl = SSL_new(ssl_ctx);
+    
+    if (!ssl) {
+        last_error_msg = "SSL_new failed: " + get_openssl_error();
+        close(sockfd);
+        sockfd = INVALID_SOCKET;
+        return false;
+    }
+    
+    SSL_set_fd(ssl, sockfd);
+    SSL_set_tlsext_host_name(ssl, this->host.c_str());
+
+    int ret = SSL_connect(ssl);
+    if (ret <= 0) {
+        std::string addr_port = (p->ai_family == AF_INET6)
+                                ? std::string("[") + ip_buf + "]:" + service
+                                : std::string(ip_buf) + ":" + service;
+        last_error_msg = "SSL handshake failed to " + addr_port + ": " + get_openssl_error();
+        LOGW(last_error_msg.c_str());
+        
+        SSL_free(ssl);
+        ssl = nullptr;
+        close(sockfd);
+        sockfd = INVALID_SOCKET;
+        return false;
+    }
+    
+    LOGD("TLS handshake completed successfully");
+    return true;
+}
+
+bool Connection::attempt_raw_connection(struct addrinfo *p, const char* ip_buf, const char* service, std::string& last_error_msg) {
+    sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+    if (sockfd == INVALID_SOCKET) {
+        last_error_msg = std::string("socket() failed: ") + strerror(errno);
+        LOGW(last_error_msg.c_str());
+        return false;
+    }
+
+    if (::connect(sockfd, p->ai_addr, p->ai_addrlen) != 0) {
+        std::string addr_port = (p->ai_family == AF_INET6)
+                                ? std::string("[") + ip_buf + "]:" + service
+                                : std::string(ip_buf) + ":" + service;
+
+        last_error_msg = "connect() failed to " + addr_port + " : " + strerror(errno);
+        LOGW(last_error_msg.c_str());
+        
+        close(sockfd);
+        sockfd = INVALID_SOCKET;
+        return false;
+    }
+    
+    return true;
+}
+
+
 void Connection::connect() {
     if (!this->list_of_connections) {
         throw InvalidRequestException("No addresses available to attempt connection. Did you call resolve_name?");
@@ -120,9 +195,7 @@ void Connection::connect() {
     bool successfully_connected = false;
     std::string last_error_msg = "Unknown error";
 
-    struct addrinfo *p;
-
-    for (p = this->list_of_connections; p != nullptr; p = p->ai_next) {
+    for (struct addrinfo *p = this->list_of_connections; p != nullptr; p = p->ai_next) {
         if (p->ai_family != family_pref) {
             continue;
         }
@@ -131,19 +204,12 @@ void Connection::connect() {
         char service[NI_MAXSERV];
 
         int rc = getnameinfo(
-            p->ai_addr,
-            p->ai_addrlen,
-            ip_buf,
-            sizeof(ip_buf),
-            service,
-            sizeof(service),
+            p->ai_addr, p->ai_addrlen,
+            ip_buf, sizeof(ip_buf),
+            service, sizeof(service),
             NI_NUMERICHOST | NI_NUMERICSERV
         );
-
-        if (rc != 0) {
-            LOGW("getnameinfo failed: %s", gai_strerror(rc));
-            continue;
-        }
+        (void)rc;
 
         const char* fmt = (p->ai_family == AF_INET6)
                             ? "connecting to server [%s]:%s"
@@ -151,68 +217,18 @@ void Connection::connect() {
 
         LOGI(fmt, ip_buf, service);
 
-        // 1. Create Socket
-        sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        if (sockfd == INVALID_SOCKET) {
-            last_error_msg = std::string("socket() failed: ") + strerror(errno);
-            LOGW(last_error_msg.c_str());
+        // 1. Create Socket and Perform Blocking Connect
+        if (!attempt_raw_connection(p, ip_buf, service, last_error_msg)) {
             continue;
         }
 
-        // 2. Perform Blocking Connect
-        if (::connect(sockfd, p->ai_addr, p->ai_addrlen) != 0) {
-            std::string addr_port = (p->ai_family == AF_INET6)
-                                    ? std::string("[") + ip_buf + "]:" + service
-                                    : std::string(ip_buf) + ":" + service;
-
-            last_error_msg = "connect() failed to " + addr_port + " : " + strerror(errno);
-            LOGW(last_error_msg.c_str());
-            
-            close(sockfd);
-            sockfd = INVALID_SOCKET;
+        // 2. TLS handshake (if enabled)
+        if (use_tls && !attempt_tls_handshake(p, ip_buf, service, last_error_msg)) {
             continue;
         }
 
-        // 3. TLS handshake
-        if (use_tls) {
-            if (!ssl_ctx) init_tls();
-            ssl = SSL_new(ssl_ctx);
-            if (!ssl) {
-                last_error_msg = "SSL_new failed: " + get_openssl_error();
-                close(sockfd);
-                sockfd = INVALID_SOCKET;
-                continue;
-            }
-            SSL_set_fd(ssl, sockfd);
-            SSL_set_tlsext_host_name(ssl, this->host.c_str());
-
-            int ret = SSL_connect(ssl);
-            if (ret <= 0) {
-                std::string addr_port = (p->ai_family == AF_INET6)
-                                        ? std::string("[") + ip_buf + "]:" + service
-                                        : std::string(ip_buf) + ":" + service;
-                last_error_msg = "SSL handshake failed to " + addr_port + ": " + get_openssl_error();
-                LOGW(last_error_msg.c_str());
-                
-                SSL_free(ssl);
-                ssl = nullptr;
-                close(sockfd);
-                sockfd = INVALID_SOCKET;
-                continue;
-            }
-            LOGD("TLS handshake completed successfully");
-        }
-
-        int flags = fcntl(sockfd, F_GETFL, 0);
-        if (flags == -1) {
-            std::string msg = "Getting socket flags failed: " + std::string(strerror(errno));
-            throw NetworkError(errno, msg);
-        }
-
-        if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1) {
-            std::string msg = "Setting socket to non-blocking failed: " + std::string(strerror(errno));
-            throw NetworkError(errno, msg);
-        }
+        // 3. Set to Non-Blocking
+        set_socket_non_blocking();
 
         successfully_connected = true;
         this->current_connection = p;
@@ -308,19 +324,28 @@ ssize_t Connection::write(const void *buf, size_t len) {
 
     if (use_tls) {
         ssize_t n = SSL_write(ssl, buf, len);
-        if (n > 0) return n;
+        if (n > 0){
+            return n;
+        } 
 
         int err = SSL_get_error(ssl, static_cast<int>(n));
-        if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) return 0;
+
+        if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) {
+            return 0;
+        } 
         
         throw ConnectionException("SSL_write failed: " + get_openssl_error());
     } else {
         ssize_t n = send(sockfd, buf, len, MSG_NOSIGNAL);
         if (n == -1) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) { 
+                return 0;
+            }
+
             if (errno == ECONNRESET) {
                 throw ServerDisconnectedException(); 
             }
+
             throw NetworkError(errno, "send failed");
         }
         return n;
