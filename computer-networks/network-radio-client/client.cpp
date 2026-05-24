@@ -265,7 +265,6 @@ void RadioClient::process_stream_data() {
     if (stream_data.bytes_to_process == 0) return;
 
     if (stream_data.icy_metaint <= 0) {
-        LOGD("Audio %s bytes of HTTP response data.", stream_data.audio_data_buffer);
         handle_audio(stream_data.audio_data_buffer, stream_data.bytes_to_process);
         stream_data.bytes_to_process = 0;
         return;

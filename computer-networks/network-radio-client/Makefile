@@ -7,14 +7,14 @@ LIB = libargs.so
 
 SRC = \
     sikradio.cpp \
-    src/args.cpp \
-    src/client.cpp \
-    src/connection.cpp \
-    src/http.cpp \
-    src/logger.cpp \
-    src/io.cpp
+    args.cpp \
+    client.cpp \
+    connection.cpp \
+    http.cpp \
+    logger.cpp \
+    io.cpp
 
-BUILD_DIR = build
+BUILD_DIR = .
 OBJ_DIR = $(BUILD_DIR)/obj
 
 OBJ = $(SRC:%.cpp=$(OBJ_DIR)/%.o)
