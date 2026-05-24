@@ -558,9 +558,10 @@ class TestURLParsing(SikradioTestBase):
         try:
             url = f"http://[::1]:{srv.port}/stream"
             stdout, stderr, rc = run_sikradio(
-                ["-u", url, "-q"], timeout=5)
+                ["-u", url, "-v", "4"], timeout=5)
             self.assertExitOk(rc)
             req = srv.last_request
+            print(stderr)
             self.assertIn(b"GET /stream HTTP/1.1", req)
             # Host header should have brackets for IPv6
             self.assertIn(b"Host: [::1]:", req)
@@ -1759,8 +1760,11 @@ class TestEdgeCases(SikradioTestBase):
         srv.start()
         try:
             url = f"http://[::1]:{srv.port}/"
-            stdout, _, rc = run_sikradio(
-                ["-u", url, "-6", "-q"], timeout=5)
+            stdout, stderr, rc = run_sikradio(
+                ["-u", url, "-6", "-v", "4"], timeout=5)
+
+            print(stderr.decode("utf-8", errors="replace"), flush=True)
+
             self.assertExitOk(rc)
             self.assertEqual(len(stdout), 100)
         finally:
@@ -1800,7 +1804,7 @@ class TestEdgeCases(SikradioTestBase):
         srv = MockServer(handler)
         srv.start()
         try:
-            stdout, _, strc = run_sikradio(
+            stdout, _, rc = run_sikradio(
                 ["-u", srv.url("/"), "-v", "4"], timeout=5)
             self.assertExitOk(rc)
             self.assertEqual(stdout, b"")

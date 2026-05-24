@@ -81,8 +81,13 @@ void Connection::init_tls() {
 void Connection::resolve_name(const std::string& scheme, const std::string& host, const std::string& port, int family_pref) {
     close_connection();
 
+    if (!host.empty() && host.front() == '[' && host.back() == ']') {
+        this->host = host.substr(1, host.size() - 2);
+    }else{
+        this->host = host;
+    }
+
     this->scheme = scheme;
-    this->host = host;
     this->port = port;
     this->family_pref = family_pref;
 
@@ -97,11 +102,11 @@ void Connection::resolve_name(const std::string& scheme, const std::string& host
     hints.ai_family = family_pref;
     hints.ai_socktype = SOCK_STREAM;
 
-    LOGI("resolving name: %s", host.c_str());
-    int s = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
+    LOGI("resolving name: %s", this->host.c_str());
+    int s = getaddrinfo(this->host.c_str(), this->port.c_str(), &hints, &result);
     
     if (s != 0) {
-        throw ConnectionException("getaddrinfo failed for " + host + ": " + std::string(gai_strerror(s)));
+        throw ConnectionException("getaddrinfo failed for " + this->host + ": " + std::string(gai_strerror(s)));
     }
 
     if (this->family_pref == AF_UNSPEC && result != nullptr) {
