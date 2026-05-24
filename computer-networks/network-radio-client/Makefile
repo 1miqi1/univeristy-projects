@@ -3,7 +3,6 @@ CXXFLAGS = -Wall -Wextra -O2 -std=c++17 -Iinclude -fPIC
 LDLIBS = -lssl -lcrypto -lboost_url
 
 TARGET = sikradio
-LIB = libargs.so
 
 SRC = \
     sikradio.cpp \
@@ -15,7 +14,7 @@ SRC = \
     io.cpp
 
 BUILD_DIR = .
-OBJ_DIR = $(BUILD_DIR)/obj
+OBJ_DIR = obj
 
 OBJ = $(SRC:%.cpp=$(OBJ_DIR)/%.o)
 
@@ -30,11 +29,7 @@ all: $(TARGET) $(LIB)
 $(TARGET): $(OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
-# ======================
-# SHARED LIB (ONLY args.cpp here)
-# ======================
-$(LIB): $(OBJ_DIR)/src/args.o
-	$(CXX) -shared -o $@ $^ -lboost_url
+
 
 # ======================
 # COMPILE OBJECT FILES
@@ -47,7 +42,7 @@ $(OBJ_DIR)/%.o: %.cpp
 # CLEAN
 # ======================
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) $(LIB)
+	rm -rf obj $(TARGET) $(LIB)
 
 # ======================
 # DEBUG BUILD
